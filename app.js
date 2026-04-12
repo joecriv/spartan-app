@@ -4233,6 +4233,7 @@ const SERVICE_RATE_DEFS = [
     { key:'evierOver',     label:'Evier over',      desc:'Trou pour evier sur plan (overmount)',                unit:'each' },
     { key:'evierUnder',    label:'Evier under',     desc:'Trou et polissage pour evier sous plan (undermount)',unit:'each' },
     { key:'evierVasque',   label:'Evier vasque',    desc:'Trou pour lavabo type vasque',                       unit:'each' },
+    { key:'cooktop',       label:'Cooktop',         desc:'Trou pour cuisinière (cooktop)',                     unit:'each' },
     { key:'fini45',        label:'Fini 45',         desc:'Finition laminée en 45',                             unit:'lf' },
     { key:'lamine',        label:'Lamine',          desc:'Assemblage des morceaux (Laminage)',                  unit:'lf' },
     { key:'polissageSous', label:'Polissage sous',  desc:'Polissage sous morceau',                             unit:'each' },
@@ -4893,7 +4894,7 @@ function calcPageSinkCounts(page) {
 // Returns { pencilLf, coupeSqft, dektonCoupeSqft, evierOver, evierUnder, evierVasque, fini45Lf, lamineLf, polissageSousQty }
 function calcServiceQtys() {
     let pencilLf = 0, coupeSqft = 0, dektonCoupeSqft = 0;
-    let evierOver = 0, evierUnder = 0, evierVasque = 0;
+    let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0;
     let fini45Lf = 0, lamineLf = 0;
     let totalSqft = 0;
     for (const page of pages) {
@@ -4908,6 +4909,7 @@ function calcServiceQtys() {
         evierOver += sinks.overmount;
         evierUnder += sinks.undermount;
         evierVasque += sinks.vasque;
+        cooktopQty += sinks.cooktops;
         // Material area — split by Dekton vs non-Dekton
         for (const s of page.shapes) {
             if (s.subtype) continue;
@@ -4933,6 +4935,7 @@ function calcServiceQtys() {
     return {
         pencilLf, coupeSqft, dektonCoupeSqft,
         evierOver, evierUnder, evierVasque,
+        cooktopQty,
         fini45Lf, lamineLf,
         polissageSousQty: pricingData.polissageSousQty || 0,
         installationSqft: totalSqft,
@@ -4953,6 +4956,7 @@ function getServiceLineItems() {
             case 'evierOver':     qty = q.evierOver;         unitLabel = `${qty} trou(s)`; break;
             case 'evierUnder':    qty = q.evierUnder;        unitLabel = `${qty} trou(s)`; break;
             case 'evierVasque':   qty = q.evierVasque;       unitLabel = `${qty} trou(s)`; break;
+            case 'cooktop':       qty = q.cooktopQty;        unitLabel = `${qty} trou(s)`; break;
             case 'fini45':        qty = q.fini45Lf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'lamine':        qty = q.lamineLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `× ${qty}`; break;
