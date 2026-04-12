@@ -4972,21 +4972,11 @@ function renderCostsPanel() {
             <span style="flex:1;color:#e0ddd5;font-size:11px">${f.label} <span style="color:#555;font-size:9px">${unitLabels[f.unit]||''}</span></span>
             <input class="mat-input cost-rate-inp" data-rkey="${f.key}" type="number" min="0" step="0.01" style="width:75px;text-align:right" value="${R[f.key]||0}">
         </div>`).join('');
-        // Polissage sous quantity (user-entered)
-        html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333;background:#1a1a2a">
-            <span style="flex:1;color:#aaaacc;font-size:11px">Polissage sous qty</span>
-            <input class="mat-input" id="polissage-sous-qty" type="number" min="0" step="1" style="width:75px;text-align:right" value="${pricingData.polissageSousQty||0}">
-        </div>`;
         rateContainer.innerHTML = html;
         rateContainer.querySelectorAll('.cost-rate-inp').forEach(inp => inp.addEventListener('input', e => {
             pricingData.rates[e.target.dataset.rkey] = parseFloat(e.target.value) || 0;
             savePricing();
         }));
-        const psqInp = document.getElementById('polissage-sous-qty');
-        if (psqInp) psqInp.addEventListener('input', e => {
-            pricingData.polissageSousQty = parseInt(e.target.value) || 0;
-            savePricing();
-        });
     }
 
     // ── Material Database ────────────────────────────────────────
