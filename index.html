@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spartan — Countertop Quote</title>
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+
+<!-- ── Auth overlay — Clerk sign-in mounts here ──────────────── -->
+<div id="login-overlay" style="position:fixed;inset:0;z-index:99999;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-family:'Raleway',sans-serif">
+    <div style="text-align:center">
+        <h1 style="font-weight:400;letter-spacing:5px;color:#e0ddd5;font-size:22px;margin-bottom:4px">SPARTAN</h1>
+        <div style="font-size:10px;color:#888;letter-spacing:2px;margin-bottom:26px">installations</div>
+        <div id="clerk-sign-in"></div>
+        <div id="login-status" style="color:#888;font-size:11px;margin-top:12px">Loading authentication...</div>
+    </div>
+</div>
+<header>
+    <h1 style="font-weight:400;letter-spacing:5px;color:#e0ddd5;">SPARTAN</h1>
+    <span style="font-size:11px;color:#888;letter-spacing:2px;">installations</span>
+</header>
+
+<div id="page-tabs">
+    <!-- tabs rendered by JS -->
+    <button id="pg-add" title="Add Page">+</button>
+</div>
+
+<div class="app-body">
+    <div class="canvas-panel">
+        <div class="toolbar">
+            <button class="tool-btn active" id="btn-draw"    title="Draw Rectangle (R)">▭ Rectangle</button>
+            <button class="tool-btn"        id="btn-ldraw"   title="Draw L-Shape">⌐ L-Shape</button>
+            <button class="tool-btn"        id="btn-udraw"   title="Draw U-Shape">⊔ U-Shape</button>
+            <button class="tool-btn"        id="btn-bsp"     title="Draw Backsplash (T-shape)">⊤ Backsplash</button>
+            <button class="tool-btn"        id="btn-circle"  title="Draw Circle">◯ Circle</button>
+            <button class="tool-btn"        id="btn-select"  title="Select / Move (S)">↖ Select</button>
+            <div class="tool-sep"></div>
+            <button class="tool-btn"        id="btn-radius"  title="Add Corner Radius">⌒ Radius</button>
+            <button class="tool-btn"        id="btn-edge"    title="Assign Edge Profile">┤ Edge Profile</button>
+            <button class="tool-btn"        id="btn-splitedge" title="Split Edge into Segments">✂ Split Edge</button>
+            <button class="tool-btn"        id="btn-joint"   title="Insert Joint Line">⋮ Joint</button>
+            <button class="tool-btn"        id="btn-text"    title="Add Text Annotation">T Text</button>
+            <button class="tool-btn"        id="btn-measure" title="Measurement Tool">↔ Mesure</button>
+            <div class="tool-sep"></div>
+            <button class="tool-btn"        id="btn-sink"    title="Place Sink">⬜ Sink</button>
+            <button class="tool-btn"        id="btn-farmsink" title="Farmhouse Sink (30×16 cutout)">⊔ Farm Sink</button>
+            <button class="tool-btn"        id="btn-cooktop" title="Place Cooktop">⊞ Cooktop</button>
+            <button class="tool-btn"        id="btn-outlet"  title="Place Outlet (2×4&quot;)">▭ Outlet</button>
+            <button class="tool-btn"        id="btn-bocci"   title="Place Bocci Outlet (2&quot; circle)">◯ Bocci</button>
+            <div class="tool-sep"></div>
+            <button class="tool-btn danger" id="btn-delete"  title="Delete Selected (Del)">✕ Delete</button>
+            <button class="tool-btn"        id="btn-undo"    title="Undo (Ctrl+Z)">↩ Undo</button>
+        </div>
+
+        <div id="edge-palette">
+            <label>Active Profile:</label>
+            <button class="ep-btn ep-active" data-etype="pencil" style="color:#dd0000">PEN</button>
+            <button class="ep-btn" data-etype="ogee" style="color:#cc44cc">OGE</button>
+            <button class="ep-btn" data-etype="bullnose" style="color:#0088dd">BN</button>
+            <button class="ep-btn" data-etype="halfbull" style="color:#00aa66">HBN</button>
+            <button class="ep-btn" data-etype="bevel" style="color:#dd8800">BEV</button>
+            <button class="ep-btn" data-etype="mitered" style="color:#7a3000">MT</button>
+            <button class="ep-btn" data-etype="special" style="color:#228B22">SF</button>
+            <button class="ep-btn" data-etype="waterfall" style="color:#006688">WF</button>
+            <button class="ep-btn" data-etype="joint" style="color:#e0457b">JT</button>
+            <button class="ep-btn" data-etype="none" style="color:#777">✕ None</button>
+            <span class="ep-hint">Click any edge or arc to assign</span>
+        </div>
+
+        <div class="canvas-scroll" id="main-canvas-scroll">
+            <div class="canvas-grid-wrap">
+                <div class="canvas-top-row">
+                    <canvas id="rulerCorner" width="28" height="28"></canvas>
+                    <canvas id="rulerH"      width="960" height="28"></canvas>
+                </div>
+                <div class="canvas-main-row">
+                    <canvas id="rulerV"      width="28" height="720"></canvas>
+                    <canvas id="mainCanvas"  width="960" height="720"></canvas>
+                </div>
+            </div>
+        </div>
+        <div id="slab-canvas-wrap">
+            <canvas id="slabCanvas"></canvas>
+        </div>
+    </div>
+
+    <!-- Right panel -->
+    <div class="form-panel">
+
+        <!-- Panel tab switcher -->
+        <div class="panel-tabs">
+            <button class="panel-tab active" id="ptab-layout">Quote</button>
+            <button class="panel-tab" id="ptab-slab">Layout</button>
+            <button class="panel-tab" id="ptab-pricing">Pricing</button>
+            <button class="panel-tab" id="ptab-costs">Costs</button>
+            <button class="panel-tab" id="ptab-registry">Quotes DB</button>
+        </div>
+
+        <!-- ── Quote panel (formerly Layout) ── -->
+        <div id="layout-panel">
+
+            <h2>Job Details</h2>
+            <div class="fp-field"><label class="fp-label">Order #</label><input class="fp-input" id="f-order" type="text" placeholder="e.g. 2026-001"></div>
+            <div class="fp-field"><label class="fp-label">Job Name</label><input class="fp-input" id="f-job" type="text" placeholder="Kitchen Renovation"></div>
+            <div class="fp-field"><label class="fp-label">Client Name</label><input class="fp-input" id="f-client" type="text" placeholder="John Smith"></div>
+            <div class="fp-field"><label class="fp-label">Address</label><input class="fp-input" id="f-address" type="text" placeholder="123 Main St, City, QC"></div>
+            <div class="fp-field"><label class="fp-label">Phone</label><div id="phone-rows" style="display:flex;flex-direction:column;gap:4px"></div><button id="add-phone-btn" style="margin-top:3px;background:none;border:none;color:#b09030;font-size:10px;cursor:pointer;padding:0;text-align:left">+ Add phone</button></div>
+            <div class="fp-field"><label class="fp-label">Date</label><input class="fp-input" id="f-date" type="date"></div>
+
+            <h2>Materials</h2>
+            <div id="mat-rows"></div>
+            <button class="add-mat-btn" id="add-mat-btn">+ Add Material</button>
+
+            <h2>Notes / Special Instructions</h2>
+            <textarea class="fp-textarea" id="f-notes" placeholder="Delivery notes, site conditions, special requests…"></textarea>
+
+            <h2>Edge Profile Legend</h2>
+            <div id="live-legend"><span class="ll-empty">No edge profiles assigned yet.</span></div>
+
+
+            <h2>Actions</h2>
+            <div class="act-btns">
+                <button class="act-btn act-primary" id="btn-save-quote">💾 Save Quote</button>
+                <button class="act-btn" id="btn-load-quote">📂 Load Quote</button>
+                <button class="act-btn" id="btn-export-pdf">📄 Export PDF (Internal)</button>
+                <button class="act-btn" id="btn-print-quote">🖨️ Print Quote</button>
+                <button class="act-btn act-danger" id="btn-new-quote">🆕 New Quote</button>
+            </div>
+            <input type="file" id="load-file-input" accept=".json" style="display:none">
+
+        </div><!-- end #layout-panel -->
+
+        <!-- ── Pricing panel ── -->
+        <!-- ── Costs panel ── -->
+        <div id="costs-panel" style="display:none">
+
+            <h2>Service Rates</h2>
+            <p class="price-internal-note">Adjust rates for fabrication services.</p>
+            <div id="cost-service-rates"></div>
+
+            <h2 style="margin-top:12px">Slab Prices</h2>
+            <p class="price-internal-note">Set your cost per slab for each material. These prices feed into the Pricing tab calculations.</p>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                <label style="font-size:11px;color:#b09030">Filter by brand:</label>
+                <select id="cost-brand-filter" class="mat-input" style="flex:1"><option value="">All brands</option></select>
+            </div>
+            <div id="cost-slab-prices"></div>
+
+            <h2 style="margin-top:12px">Material Database</h2>
+            <p class="price-internal-note">Add or remove materials from the master database.</p>
+            <div id="matdb-rows" style="max-height:250px;overflow-y:auto"></div>
+            <button class="add-mat-btn" id="matdb-add-btn" style="margin-top:6px">+ Add Material to Database</button>
+
+        </div><!-- end #costs-panel -->
+
+        <div id="pricing-panel" style="display:none">
+
+            <h2>Quote Summary</h2>
+            <div id="pricing-summary"></div>
+
+            <div class="act-btns" style="margin-top:14px">
+                <button class="act-btn act-primary" id="btn-gen-proposal">📋 Generate Proposal</button>
+            </div>
+
+        </div><!-- end #pricing-panel -->
+
+        <!-- ── Slab Layout panel ── -->
+        <div id="slab-panel" style="display:none">
+
+            <h2>Dalles / Slabs</h2>
+            <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
+                <button class="tool-btn" id="slab-add-btn" style="font-size:11px;padding:5px 10px">+ Dalle</button>
+                <button class="tool-btn danger" id="slab-remove-btn" style="font-size:11px;padding:5px 10px">− Dalle</button>
+                <button class="tool-btn" id="slab-refresh-btn" style="font-size:11px;padding:5px 10px">↺ Pièces</button>
+            </div>
+            <!-- Per-slab dimension rows (generated by slabRefreshSlabList) -->
+            <div id="slab-def-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
+
+            <h2 style="margin-top:4px">Pièces disponibles / Pieces</h2>
+            <p class="price-internal-note" style="margin-bottom:6px">Cliquez pour placer sur la dalle sélectionnée.</p>
+            <div id="slab-piece-list" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto"></div>
+
+            <div style="margin-top:10px;display:flex;gap:5px;flex-wrap:wrap">
+                <button class="tool-btn" id="slab-rotate-btn" style="font-size:11px;padding:5px 10px">↻ Pivoter</button>
+                <button class="tool-btn danger" id="slab-remove-piece-btn" style="font-size:11px;padding:5px 10px">✕ Retirer</button>
+                <button class="tool-btn" id="slab-clear-btn" style="font-size:11px;padding:5px 10px">🗑 Vider tout</button>
+            </div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button class="tool-btn" id="slab-export-pdf-btn" style="font-size:11px;padding:5px 10px;background:#2d3a10;border-color:#555555">📐 Export Layout PDF</button>
+                <button class="tool-btn" id="slab-import-img-btn" style="font-size:11px;padding:5px 10px;">📷 Import Slab Image</button>
+                <button class="tool-btn" id="kitchen-lock-btn" style="font-size:11px;padding:5px 12px;background:#2d3a10;border-color:#888888;color:#e0ddd5;font-weight:bold;">🎨 Lock All & Arrange Kitchen</button>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;user-select:none;margin-left:4px">
+                    <input type="checkbox" id="slab-transparent-toggle" style="cursor:pointer">
+                    Transparent
+                </label>
+            </div>
+
+        </div><!-- end #slab-panel -->
+
+        <!-- ── Quote Registry panel ── -->
+        <div id="registry-panel" style="display:none;flex-direction:column;height:100%;overflow:hidden">
+
+            <h2 style="flex-shrink:0">Quote Database</h2>
+            <div style="display:flex;gap:5px;margin-bottom:6px;flex-shrink:0">
+                <input class="fp-input" id="reg-search" type="text" placeholder="Search client, job, order #, rep..." style="flex:1;font-size:11px;padding:4px 8px">
+            </div>
+            <div style="display:flex;gap:3px;margin-bottom:6px;flex-shrink:0;flex-wrap:wrap">
+                <button class="tool-btn reg-filter-btn active" data-status="all" style="font-size:9px;padding:2px 6px">All</button>
+                <button class="tool-btn reg-filter-btn" data-status="draft" style="font-size:9px;padding:2px 6px">Draft</button>
+                <button class="tool-btn reg-filter-btn" data-status="sent" style="font-size:9px;padding:2px 6px">Sent</button>
+                <button class="tool-btn reg-filter-btn" data-status="approved" style="font-size:9px;padding:2px 6px">Approved</button>
+                <button class="tool-btn reg-filter-btn" data-status="completed" style="font-size:9px;padding:2px 6px">Done</button>
+                <button class="tool-btn reg-filter-btn" data-status="cancelled" style="font-size:9px;padding:2px 6px">Cancel</button>
+            </div>
+            <div id="reg-current" style="display:none;background:#1a2a1a;border:1px solid #2a4a2a;border-radius:4px;padding:6px;margin-bottom:6px;flex-shrink:0">
+                <div style="font-size:8px;color:#4a8a4a;font-weight:700;text-transform:uppercase;margin-bottom:2px">Currently Editing</div>
+                <div id="reg-current-name" style="font-size:11px;color:#b09030;font-weight:700"></div>
+                <div id="reg-current-meta" style="font-size:9px;color:#888;margin-top:1px"></div>
+            </div>
+            <div id="reg-list" style="display:flex;flex-direction:column;gap:3px;flex:1;overflow-y:auto;min-height:0">
+                <div style="color:#555;font-size:11px;text-align:center;padding:20px 0">Loading quotes...</div>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:5px;flex-shrink:0">
+                <button class="act-btn act-primary" id="reg-new-btn" style="font-size:11px;padding:5px 10px">+ New Quote</button>
+                <button class="act-btn" id="reg-refresh-btn" style="font-size:11px;padding:5px 10px">↻ Refresh</button>
+            </div>
+
+        </div><!-- end #registry-panel -->
+
+    </div>
+</div>
+
+<div class="status-bar">
+    <span id="st-tool">Tool: <b>Draw</b></span>
+    <span id="st-pieces">Pieces: <b>0</b></span>
+    <span id="st-pos">Cursor: <b>—</b></span>
+    <span id="st-hint">R=Draw &nbsp;S=Select &nbsp;Ctrl+Z=Undo &nbsp;Del=Delete &nbsp;Dbl-click=Edit</span>
+</div>
+
+<!-- ── Popups ── -->
+<div id="size-popup" class="popup-box">
+    <h3 id="pop-title">Set Dimensions</h3>
+    <div class="pop-row"><label>Width <span>(inches)</span></label><input id="pop-w" type="number" min="1" max="240" step="0.5" placeholder="e.g. 36"></div>
+    <div class="pop-row"><label>Height <span>(inches)</span></label><input id="pop-h" type="number" min="1" max="180" step="0.5" placeholder="e.g. 25.5"></div>
+    <div class="pop-hint">Inches only &nbsp;|&nbsp; Enter=confirm &nbsp;Esc=cancel</div>
+    <div class="pop-btns"><button class="pop-ok" id="pop-ok">Add Piece</button><button class="pop-cancel" id="pop-cancel">Cancel</button></div>
+</div>
+
+<div id="lshape-popup" class="popup-box" style="min-width:290px">
+    <h3 id="lshape-title">L-Shape Dimensions</h3>
+    <canvas id="lshape-diagram" width="200" height="130" style="display:block;margin:0 auto 8px;background:#141414;border-radius:3px;border:1px solid #333333;"></canvas>
+    <div class="toggle-row">
+        <button class="tog-btn active" id="lshape-ne" title="Notch top-right">┘ NE</button>
+        <button class="tog-btn"        id="lshape-nw" title="Notch top-left">└ NW</button>
+        <button class="tog-btn"        id="lshape-se" title="Notch bottom-right">┐ SE</button>
+        <button class="tog-btn"        id="lshape-sw" title="Notch bottom-left">┌ SW</button>
+    </div>
+    <div class="ls-fields">
+        <div class="ls-field"><span class="ls-lbl" id="lbl-A">A</span><input class="ls-inp" id="ls-A" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-B">B</span><input class="ls-inp" id="ls-B" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-C">C</span><input class="ls-inp" id="ls-C" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-D">D</span><input class="ls-inp" id="ls-D" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-E">E</span><input class="ls-inp" id="ls-E" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-F">F</span><input class="ls-inp" id="ls-F" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+    </div>
+    <div class="pop-hint" id="lshape-hint">Shaded = auto-computed &nbsp;|&nbsp; inches only</div>
+    <div class="pop-btns"><button class="pop-ok" id="lshape-ok">Add Piece</button><button class="pop-cancel" id="lshape-cancel">Cancel</button></div>
+</div>
+
+<div id="ushape-popup" class="popup-box" style="min-width:300px">
+    <h3 id="ushape-title">U-Shape Dimensions</h3>
+    <canvas id="ushape-diagram" width="240" height="150" style="display:block;margin:0 auto 8px;background:#141414;border-radius:3px;border:1px solid #333333;"></canvas>
+    <div class="ls-fields">
+        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="us-A" type="number" min="1" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="us-B" type="number" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="us-C" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="us-D" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="us-E" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">F</span><input class="ls-inp" id="us-F" type="number" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
+    </div>
+    <div class="pop-hint">A=width · B=left arm height · C=left arm width · D=bottom strip height · E=right arm width · F=right arm height — rotate with R</div>
+    <div class="pop-btns"><button class="pop-ok" id="ushape-ok">Add Piece</button><button class="pop-cancel" id="ushape-cancel">Cancel</button></div>
+</div>
+
+<div id="text-popup" class="popup-box" style="min-width:220px">
+    <h3>Add Text</h3>
+    <div class="pop-row"><label>Text</label><input id="text-content" type="text" placeholder="Label / note..." style="width:150px"></div>
+    <div class="pop-row"><label>Size <span>(pt)</span></label><input id="text-size" type="number" min="6" max="72" step="1" value="12"></div>
+    <div class="pop-btns"><button class="pop-ok" id="text-ok">Place</button><button class="pop-cancel" id="text-cancel">Cancel</button></div>
+</div>
+
+<div id="circle-popup" class="popup-box">
+    <h3>Add Circle</h3>
+    <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="circle-r" type="number" min="0.5" max="120" step="0.5" value="12"></div>
+    <div class="pop-hint">Enter=confirm &nbsp;Esc=cancel</div>
+    <div class="pop-btns"><button class="pop-ok" id="circle-ok">Add Piece</button><button class="pop-cancel" id="circle-cancel">Cancel</button></div>
+</div>
+
+<div id="sink-popup" class="popup-box">
+    <h3>Add Sink</h3>
+    <div class="toggle-row"><button class="tog-btn active" id="sink-btn-over">Overmount</button><button class="tog-btn" id="sink-btn-under">Undermount</button><button class="tog-btn" id="sink-btn-vasque">Vasque</button></div>
+    <div id="sink-rect-fields">
+        <div class="pop-row"><label>Width <span>(inches)</span></label><input id="sink-w" type="number" min="1" max="240" step="0.5" value="24"></div>
+        <div class="pop-row"><label>Depth <span>(inches)</span></label><input id="sink-h" type="number" min="1" max="180" step="0.5" value="15"></div>
+    </div>
+    <div id="sink-vasque-fields" style="display:none">
+        <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="sink-vasque-r" type="number" min="1" max="24" step="0.5" value="8"></div>
+    </div>
+    <div class="pop-btns"><button class="pop-ok" id="sink-ok">Place Sink</button><button class="pop-cancel" id="sink-cancel">Cancel</button></div>
+</div>
+
+<div id="radius-popup" class="popup-box">
+    <h3>Traitement du coin — <span id="radius-corner-lbl" style="color:#b09030">—</span></h3>
+    <div class="toggle-row" style="margin-bottom:8px">
+        <button class="tog-btn active" id="corner-tog-round">⌒ Arrondi</button>
+        <button class="tog-btn" id="corner-tog-chamfer">◢ Chanfrein</button>
+    </div>
+    <input type="hidden" id="corner-mode" value="round">
+    <div id="radius-round-section">
+        <div class="pop-row"><label id="radius-val-lbl">Rayon <span>(pouces)</span></label><input id="radius-val" type="number" min="0" max="24" step="0.25" value="0"></div>
+        <div class="pop-hint">0 = coin vif</div>
+        <div class="pop-btns"><button class="pop-ok" id="radius-ok">Appliquer</button><button class="pop-cancel" id="radius-cancel">Annuler</button></div>
+    </div>
+    <div id="radius-chamfer-section" style="display:none">
+        <div class="pop-hint" style="margin-bottom:8px;line-height:1.6;">Cliquez sur un point le long d'une arête,<br>puis sur un point le long de l'autre arête.</div>
+        <button class="pop-ok" id="chamfer-pick-btn" style="width:100%;margin-bottom:6px;">📍 Choisir 2 points</button>
+        <button class="pop-cancel" id="radius-cancel2" style="width:100%;">Annuler</button>
+    </div>
+</div>
+
+<div id="edge-popup" class="popup-box">
+    <h3>Edge Profile</h3>
+    <div class="pop-row"><label>Edge</label><span id="edge-which-lbl" style="color:#b09030;font-weight:700;font-size:13px">—</span></div>
+    <div class="pop-row">
+        <label>Profile</label>
+        <select id="edge-type-sel">
+            <option value="none">None / Default</option>
+            <option value="pencil">Pencil Edge (PEN)</option>
+            <option value="ogee">Ogee Edge (OGE)</option>
+            <option value="bullnose">Bullnose Edge (BN)</option>
+            <option value="halfbull">Half Bullnose (HBN)</option>
+            <option value="bevel">Bevel Edge (BEV)</option>
+            <option value="mitered">Mitered Edge (MT)</option>
+            <option value="special">Special Finish (SF)</option>
+            <option value="joint">Joint Edge (JT)</option>
+            <option value="waterfall">Waterfall Edge (WF)</option>
+        </select>
+    </div>
+    <div id="miter-width-row" class="pop-row" style="display:none"><label>Miter width <span>(in)</span></label><input type="number" id="miter-width-val" placeholder="e.g. 3" min="0.5" max="12" step="0.25"></div>
+    <div class="pop-btns"><button class="pop-ok" id="edge-ok">Set Profile</button><button class="pop-cancel" id="edge-cancel">Cancel</button></div>
+</div>
+
+<!-- Split edge popup removed — split is now click-based -->
+
+<div id="bsp-popup" class="popup-box" style="min-width:290px">
+    <h3 id="bsp-title">Backsplash Dimensions</h3>
+    <canvas id="bsp-diagram" width="200" height="130" style="display:block;margin:0 auto 8px;background:#141414;border-radius:3px;border:1px solid #333333;"></canvas>
+    <div class="ls-fields">
+        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="bsp-W" type="number" min="1" max="480" step="0.5" value="100"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="bsp-Hb" type="number" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="bsp-Hp" type="number" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="bsp-Wp" type="number" min="1" max="480" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="bsp-Xl" type="number" min="0" max="480" step="0.5" value="25"><span class="ls-unit">"</span></div>
+    </div>
+    <div class="pop-hint">A=Total Width · B=Base Height · C=Step Height · D=Step Width · E=Step Left Offset</div>
+    <div class="pop-btns"><button class="pop-ok" id="bsp-ok">Add Piece</button><button class="pop-cancel" id="bsp-cancel">Cancel</button></div>
+</div>
+
+<div id="joint-popup" class="popup-box">
+    <h3>Add Joint Line</h3>
+    <div class="toggle-row"><button class="tog-btn active" id="joint-btn-v">↕ Vertical</button><button class="tog-btn" id="joint-btn-h">↔ Horizontal</button></div>
+    <div class="pop-hint">Drag to reposition &nbsp;|&nbsp; Dbl-click line to remove &nbsp;|&nbsp; Del to delete selected joint</div>
+    <div class="pop-btns"><button class="pop-ok" id="joint-ok">Add Joint</button><button class="pop-cancel" id="joint-cancel">Cancel</button></div>
+</div>
+
+<!-- ═══ SLAB IMAGE IMPORT OVERLAY ═══════════════════════════════════ -->
+<input type="file" id="slab-img-file" accept="image/*" style="display:none">
+
+<div id="slab-img-overlay" style="display:none; position:fixed; inset:0; background:#0d0d0d; z-index:9999; flex-direction:column;">
+    <div id="slab-img-topbar" style="padding:9px 14px; background:#1a2a44; color:#e0e8ff; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0; font-size:12px;">
+        <span><b>Click the 4 corners of the slab</b> in order:</span>
+        <span style="color:#44ee66; font-weight:700">① TL</span>
+        <span style="color:#888">→</span>
+        <span style="color:#eeee44; font-weight:700">② TR</span>
+        <span style="color:#888">→</span>
+        <span style="color:#ff6644; font-weight:700">③ BR</span>
+        <span style="color:#888">→</span>
+        <span style="color:#44aaff; font-weight:700">④ BL</span>
+        <span id="slab-img-progress" style="margin-left:auto; color:#b09030; font-weight:bold; font-size:14px;">0 / 4</span>
+        <button class="tool-btn" id="slab-img-undo"    style="font-size:11px;padding:4px 10px;" disabled>↩ Undo</button>
+        <button class="tool-btn" id="slab-img-confirm" style="font-size:11px;padding:4px 10px;" disabled>✓ Confirm</button>
+        <button class="tool-btn danger" id="slab-img-cancel" style="font-size:11px;padding:4px 10px;">✕ Cancel</button>
+    </div>
+    <div style="flex:1; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#0d0d0d;">
+        <canvas id="slab-img-canvas" style="cursor:crosshair; display:block; max-width:100%; max-height:100%;"></canvas>
+    </div>
+    <div id="slab-img-picker" style="display:none; padding:14px; background:#1a2a44; color:#e0e8ff; text-align:center; flex-shrink:0;">
+        <div style="margin-bottom:10px; font-weight:bold; font-size:13px;">Apply to which slab?</div>
+        <div id="slab-img-picker-btns" style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"></div>
+    </div>
+</div>
+
+<!-- ═══ KITCHEN LAYOUT OVERLAY ══════════════════════════════════════ -->
+<div id="kitchen-overlay" style="display:none;position:fixed;inset:0;z-index:9000;background:#0e0e0e;flex-direction:column;">
+    <!-- Top bar -->
+    <div style="padding:6px 14px;background:#161616;border-bottom:2px solid #b09030;display:flex;align-items:center;gap:10px;flex-shrink:0;">
+        <span style="color:#b09030;font-size:14px;font-weight:bold;letter-spacing:1px;">🎨 Kitchen Layout</span>
+        <div style="flex:1"></div>
+        <span style="color:#999999;font-size:11px;">Selected:</span>
+        <span id="kit-sel-label" style="color:#b09030;font-size:11px;font-weight:bold;">none</span>
+        <button class="tool-btn" id="kit-rotate-btn" style="font-size:11px;padding:4px 10px;" disabled>↻ Rotate 90°</button>
+        <div class="tool-sep"></div>
+        <input id="kit-text-input" type="text" placeholder="Section label…" style="width:150px;background:#0e0e0e;border:1px solid #444444;border-radius:4px;color:#e0ddd5;font-family:'Raleway',sans-serif;font-size:12px;padding:4px 8px;outline:none;">
+        <button class="tool-btn" id="kit-add-text-btn" style="font-size:11px;padding:4px 10px;">+ Label</button>
+        <div class="tool-sep"></div>
+        <span style="color:#999999;font-size:10px;">BG:</span>
+        <select id="kit-bg-sel" style="background:#0e0e0e;border:1px solid #444444;border-radius:4px;color:#e0ddd5;font-family:'Raleway',sans-serif;font-size:11px;padding:3px 6px;outline:none;">
+            <option value="#f5f5f0">White</option>
+            <option value="#2d3a10">Dark Grey</option>
+            <option value="#1a2a3a">Navy</option>
+            <option value="#3a2a1a">Brown</option>
+            <option value="#1a3a2a">Forest</option>
+            <option value="#d5cfc0">Warm Beige</option>
+            <option value="#b0b8c0">Slate Blue</option>
+            <option value="#4a4a4a">Charcoal</option>
+        </select>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" id="kit-clear-btn" style="font-size:11px;padding:4px 10px;">🗑 Reset Layout</button>
+        <button class="tool-btn" id="kit-export-btn" style="font-size:11px;padding:4px 12px;background:#2d3a10;border-color:#555555;font-weight:bold;">📄 Export PDF</button>
+        <button class="tool-btn danger" id="kit-close-btn" style="font-size:11px;padding:4px 10px;">✕ Close</button>
+    </div>
+    <div style="display:flex;flex:1;overflow:hidden;min-height:0;">
+        <!-- Sidebar: piece list -->
+        <div id="kit-sidebar" style="width:200px;background:#141414;border-right:1px solid #333333;overflow-y:auto;padding:10px;flex-shrink:0;">
+            <div style="color:#b09030;font-size:10px;font-weight:bold;letter-spacing:.5px;margin-bottom:8px;">ALL PIECES</div>
+            <div id="kit-piece-list"></div>
+            <div style="margin-top:14px;border-top:1px solid #333333;padding-top:10px;">
+                <div style="color:#999999;font-size:10px;margin-bottom:6px;">💡 TIPS</div>
+                <div style="color:#777777;font-size:9px;line-height:1.6;">
+                    • Click piece/label → pick up<br>
+                    • Click canvas → drop<br>
+                    • R key → rotate selected piece<br>
+                    • Delete key → remove selected label<br>
+                    • Scroll → zoom in/out<br>
+                    • Middle-drag → pan<br>
+                    • Right-click → deselect
+                </div>
+            </div>
+        </div>
+        <canvas id="kit-canvas" style="flex:1;display:block;cursor:default;"></canvas>
+    </div>
+    <div id="kit-status" style="padding:5px 14px;background:#1e1e1e;color:#999999;font-size:11px;border-top:1px solid #333333;flex-shrink:0;">Drag pieces to arrange your kitchen layout. Select a piece and press R to rotate.</div>
+</div>
+
+<!-- ── Scripts — load order matters (globals shared across files) ── -->
+<script src="config.js"></script>
+<script
+    async
+    crossorigin="anonymous"
+    data-clerk-publishable-key="pk_test_Zmxvd2luZy1maWxseS02Ni5jbGVyay5hY2NvdW50cy5kZXYk"
+    src="https://flowing-filly-66.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+    type="text/javascript"
+></script>
+<script src="app.js"></script>
+</body>
+</html>
