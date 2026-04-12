@@ -4912,7 +4912,12 @@ function getServiceLineItems() {
             case 'measurements':  qty = q.measurementsQty;   unitLabel = qty ? 'flat fee' : 'disabled'; break;
         }
         const rate = R[d.key] || 0;
-        const cost = qty * rate;
+        let cost = qty * rate;
+        // Installation minimum fee: floor the installation cost if min > 0
+        if (d.key === 'installation') {
+            const minFee = pricingData.installationMin || 0;
+            if (minFee > 0 && cost < minFee) cost = minFee;
+        }
         return { ...d, qty, rate, cost, unitLabel };
     }).filter(item => item.qty > 0 || item.rate > 0);
 }
@@ -4981,11 +4986,21 @@ function renderCostsPanel() {
             <span style="flex:1;color:#e0ddd5;font-size:11px">${f.label} <span style="color:#555;font-size:9px">${unitLabels[f.unit]||''}</span></span>
             <input class="mat-input cost-rate-inp" data-rkey="${f.key}" type="number" min="0" step="0.01" style="width:75px;text-align:right" value="${R[f.key]||0}">
         </div>`).join('');
+        // Installation minimum fee row
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333;background:#181818">
+            <span style="flex:1;color:#e0ddd5;font-size:11px">Installation min. fee <span style="color:#555;font-size:9px">$ flat floor</span></span>
+            <input class="mat-input cost-inst-min-inp" type="number" min="0" step="1" style="width:75px;text-align:right" value="${pricingData.installationMin||0}">
+        </div>`;
         rateContainer.innerHTML = html;
         rateContainer.querySelectorAll('.cost-rate-inp').forEach(inp => inp.addEventListener('input', e => {
             pricingData.rates[e.target.dataset.rkey] = parseFloat(e.target.value) || 0;
             savePricing();
         }));
+        const instMinInp = rateContainer.querySelector('.cost-inst-min-inp');
+        if (instMinInp) instMinInp.addEventListener('input', e => {
+            pricingData.installationMin = parseFloat(e.target.value) || 0;
+            savePricing();
+        });
     }
 
     // ── Material Database ────────────────────────────────────────
@@ -5056,8 +5071,9 @@ function renderPricingPanel() {
     </div>`;
 
     // ── Service line items (only show if qty > 0) ────────────
-    // Exclude polissageSous from auto list — it has its own toggle below
-    const items = getServiceLineItems().filter(i => i.key !== 'polissageSous' && i.key !== 'measurements' && i.qty > 0);
+    // Exclude polissageSous, measurements, installation — each has its own block below
+    const allServiceItems = getServiceLineItems();
+    const items = allServiceItems.filter(i => i.key !== 'polissageSous' && i.key !== 'measurements' && i.key !== 'installation' && i.qty > 0);
     let serviceCostTotal = items.reduce((s, i) => s + i.cost, 0);
 
     if (items.length) {
@@ -5089,6 +5105,30 @@ function renderPricingPanel() {
             <input class="mat-input" id="pricing-ps-qty" type="number" min="1" step="1" value="${psQty || 1}" style="width:50px;text-align:right">
             <span style="font-size:10px;color:#999">× ${fmt$(psRate)}</span>
             <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:auto">${psEnabled ? fmt$(psCost) : ''}</span>
+        </div>
+    </div>`;
+
+    // ── Installation (with minimum fee) ──────────────────────
+    const instItem = allServiceItems.find(i => i.key === 'installation');
+    const instRate = pricingData.rates.installation || 0;
+    const instSqft = instItem ? instItem.qty : 0;
+    const instRawCost = instSqft * instRate;
+    const instMin = pricingData.installationMin || 0;
+    const instCost = instItem ? instItem.cost : Math.max(instRawCost, instMin);
+    const instMinApplied = instMin > 0 && instRawCost < instMin;
+    if (instRate > 0 || instMin > 0) serviceCostTotal += instCost;
+
+    sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px">
+        <div class="price-check-label">Installation</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+            <span style="font-size:10px;color:#999;flex:1">${instSqft.toFixed(2)} sqft × ${fmt$(instRate)}</span>
+            <span style="font-size:10px;color:${instMinApplied?'#777':'#b09030'};${instMinApplied?'text-decoration:line-through':''}">${fmt$(instRawCost)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+            <span style="font-size:10px;color:#999">Min. fee</span>
+            <input class="mat-input" id="pricing-inst-min" type="number" min="0" step="1" value="${instMin}" style="width:70px;text-align:right">
+            <span style="font-size:9px;color:${instMinApplied?'#e0a050':'#555'};margin-left:6px">${instMinApplied ? 'min applied' : ''}</span>
+            <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:auto">${fmt$(instCost)}</span>
         </div>
     </div>`;
 
@@ -5155,6 +5195,12 @@ function renderPricingPanel() {
     const measToggle = document.getElementById('pricing-meas-toggle');
     if (measToggle) measToggle.addEventListener('change', e => {
         pricingData.measurementsEnabled = e.target.checked;
+        savePricing(); renderPricingPanel();
+    });
+    // Installation minimum fee
+    const instMinInp = document.getElementById('pricing-inst-min');
+    if (instMinInp) instMinInp.addEventListener('input', e => {
+        pricingData.installationMin = parseFloat(e.target.value) || 0;
         savePricing(); renderPricingPanel();
     });
 }
