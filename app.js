@@ -6942,7 +6942,7 @@ document.getElementById('btn-gen-proposal').addEventListener('click', generatePr
 function quoteFilename(ext) {
     const order = (formData.order || 'XXXX').replace(/[^a-zA-Z0-9_-]/g, '-');
     const job   = (formData.job   || 'Quote').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return `SP-${order}_${job}.${ext}`;
+    return `SI-${order}_${job}.${ext}`;
 }
 
 // ── Save Quote ────────────────────────────────────────────────
