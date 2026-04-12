@@ -5037,6 +5037,9 @@ function renderPricingPanel() {
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
         const matName = [mat.color, mat.thickness].filter(Boolean).join(' · ') || 'Material';
+        const isDekton = (mat.color||'').toLowerCase().includes('dekton') ||
+                         (mat.thickness||'').toLowerCase().includes('dekton') ||
+                         (mat.notes||'').toLowerCase().includes('dekton');
         const dbCostPerSlab = getMatCostPerSlab(+mid);
         const slabSqft = getMatSlabSqft(+mid);
         const suggestedQty = slabSqft > 0 ? Math.ceil(msqft / slabSqft) : 1;
@@ -5047,22 +5050,32 @@ function renderPricingPanel() {
         const hasDbPrice = dbCostPerSlab > 0;
         const useCustom = ov.customPrice != null && ov.customPrice >= 0;
         const pricePerSlab = useCustom ? ov.customPrice : dbCostPerSlab;
-        const cost = slabQty * pricePerSlab;
-        materialCostTotal += cost;
+        const slabCost = slabQty * pricePerSlab;
+        // Per-material cutting fee (dekton vs regular)
+        const cuttingRate = isDekton ? (pricingData.rates.dektonCoupe || 0) : (pricingData.rates.coupe || 0);
+        const cuttingCost = msqft * cuttingRate;
+        const matSubtotal = slabCost + cuttingCost;
+        materialCostTotal += matSubtotal;
 
         matLines += `<div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px 8px;margin-bottom:4px">
-            <div style="font-size:11px;font-weight:700;color:#e0ddd5;margin-bottom:4px">${matName}</div>
+            <div style="font-size:11px;font-weight:700;color:#e0ddd5;margin-bottom:4px">${matName}${isDekton ? ' <span style="color:#e0a050;font-weight:500;font-size:9px">(Dekton)</span>' : ''}</div>
             <div style="font-size:9px;color:#888;margin-bottom:4px">${msqft.toFixed(2)} sqft total · suggested ${suggestedQty} slab${suggestedQty!==1?'s':''}</div>
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
                 <span style="font-size:10px;color:#999;min-width:50px">Qty slabs</span>
                 <input class="mat-input pricing-slab-qty" data-mid="${mid}" type="number" min="0" step="1" value="${slabQty}" style="width:60px;text-align:right">
             </div>
-            <div style="display:flex;gap:6px;align-items:center">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
                 <span style="font-size:10px;color:#999;min-width:50px">$/slab</span>
                 <input class="mat-input pricing-slab-price" data-mid="${mid}" type="number" min="0" step="0.01" value="${pricePerSlab}" style="width:80px;text-align:right" ${hasDbPrice && !useCustom ? 'placeholder="DB: '+dbCostPerSlab.toFixed(2)+'"' : ''}>
                 ${!hasDbPrice ? '<span style="font-size:8px;color:#e05c5c">no DB price</span>' : ''}
             </div>
-            <div style="text-align:right;margin-top:3px;font-size:11px;font-weight:700;color:#b09030">${fmt$(cost)}</div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;padding:2px 0;border-top:1px dashed #333">
+                <span>Slab cost</span><span>${fmt$(slabCost)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;padding:2px 0">
+                <span>${isDekton ? 'Dekton cut' : 'Cut'}: ${msqft.toFixed(2)} sqft × ${fmt$(cuttingRate)}</span><span>${fmt$(cuttingCost)}</span>
+            </div>
+            <div style="text-align:right;margin-top:3px;font-size:11px;font-weight:700;color:#b09030;border-top:1px solid #333;padding-top:3px">Material total: ${fmt$(matSubtotal)}</div>
         </div>`;
     }
 
@@ -5071,9 +5084,9 @@ function renderPricingPanel() {
     </div>`;
 
     // ── Service line items (only show if qty > 0) ────────────
-    // Exclude polissageSous, measurements, installation — each has its own block below
+    // Exclude polissageSous, measurements, installation, coupe, dektonCoupe — each has its own block/attribution
     const allServiceItems = getServiceLineItems();
-    const items = allServiceItems.filter(i => i.key !== 'polissageSous' && i.key !== 'measurements' && i.key !== 'installation' && i.qty > 0);
+    const items = allServiceItems.filter(i => i.key !== 'polissageSous' && i.key !== 'measurements' && i.key !== 'installation' && i.key !== 'coupe' && i.key !== 'dektonCoupe' && i.qty > 0);
     let serviceCostTotal = items.reduce((s, i) => s + i.cost, 0);
 
     if (items.length) {
@@ -6675,20 +6688,28 @@ function calcRoomPricing(page) {
     let materialCostTotal = 0;
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
+        const isDekton = (mat.color||'').toLowerCase().includes('dekton') ||
+                         (mat.thickness||'').toLowerCase().includes('dekton') ||
+                         (mat.notes||'').toLowerCase().includes('dekton');
         const pps = getMatPriceSqft(+mid);
         const matCost = msqft * pps;
-        materialCostTotal += matCost;
+        // Attribute cutting fee directly to the material based on its type
+        const cuttingRate = isDekton ? (pricingData.rates.dektonCoupe || 0) : (pricingData.rates.coupe || 0);
+        const cuttingCost = msqft * cuttingRate;
+        const entryPreT = matCost + cuttingCost;
+        materialCostTotal += entryPreT;
         matEntries.push({
             color:     mat.color     || '',
             supplier:  mat.supplier  || '',
             thickness: mat.thickness || '',
             finish:    mat.finish    || '',
-            preT:      matCost
+            preT:      entryPreT,
+            isDekton
         });
     }
 
-    // Use new service rate model
-    const serviceItems = getServiceLineItems();
+    // Use new service rate model — exclude coupe/dektonCoupe (already attributed per-material)
+    const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
     const totalAddons = serviceItems.reduce((s, i) => s + i.cost, 0);
 
     // Blend addons proportionally into each material entry
