@@ -5082,6 +5082,15 @@ function renderPricingPanel() {
             matSqftMap[mid] = (matSqftMap[mid] || 0) + area / SQFT_PX2;
         }
     }
+    // Total project sqft across all shapes (used for Option scenarios)
+    let totalProjectSqft = 0;
+    for (const v of Object.values(matSqftMap)) totalProjectSqft += v;
+    // Options ALWAYS cover the whole project — overwrite their per-shape sqft
+    for (const mat of (formData.materials||[])) {
+        if ((mat.type||'zone') === 'option') {
+            matSqftMap[mat.id] = totalProjectSqft;
+        }
+    }
     // Helper: build one material cost block (HTML + numbers)
     function buildMatBlock(mid, msqft) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
@@ -5162,26 +5171,8 @@ function renderPricingPanel() {
         </div>`;
     }
 
-    // ── Options: side-by-side, never summed ──────────────────
-    let optionsTotal = 0;  // shown for reference only, not added to grand total
-    if (optionsGrp.length > 0) {
-        let optInner = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">';
-        optionsGrp.forEach((b) => {
-            optionsTotal += b.matSubtotal;
-            const lbl = b.mat.label || `Option ${getOptionLetter(b.mat)}`;
-            optInner += `<div style="flex:1;min-width:220px;background:#1a1a1a;border:1px solid #b09030;border-radius:4px;padding:6px;display:flex;flex-direction:column">
-                <div style="font-size:12px;font-weight:700;color:#b09030;margin-bottom:4px;text-align:center;border-bottom:1px solid #333;padding-bottom:3px">${lbl}</div>
-                <div style="flex:1">${b.html}</div>
-                <div style="text-align:right;margin-top:4px;padding-top:4px;border-top:1px solid #333;font-size:12px;font-weight:700;color:#b09030">${lbl} total: ${fmt$(b.matSubtotal)}</div>
-            </div>`;
-        });
-        optInner += '</div>';
-        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:2px dashed #b09030;border-radius:6px;padding:8px">
-            <div class="price-check-label" style="color:#b09030">Options (client selects one)</div>
-            ${optInner}
-            <p style="font-size:9px;color:#999;margin-top:6px;font-style:italic">Please select one option — pricing reflects each independently. Shared project services (install, measurements, etc.) are listed once below.</p>
-        </div>`;
-    }
+    // (Options section is rendered at the bottom, after all services are computed,
+    //  so each Option's displayed total can include the shared baseline.)
 
     // ── Service line items (only show if qty > 0) ────────────
     // Exclude polissageSous, measurements, installation, coupe, dektonCoupe — each has its own block/attribution
@@ -5262,14 +5253,40 @@ function renderPricingPanel() {
         </div>
     </div>`;
 
-    // ── Grand total ──────────────────────────────────────────
-    const grandTotal = materialCostTotal + serviceCostTotal;
+    // ── Grand total of committed costs (pages + zones + services) ──
+    const committedTotal = materialCostTotal + serviceCostTotal;
+    const committedLabel = optionsGrp.length > 0 ? 'Committed subtotal (shared)' : 'Grand Total';
     sumHtml += `<div class="room-pricing-section" style="margin-top:8px;padding:8px;background:#2d3a10;border:1px solid #b09030;border-radius:6px">
         <div class="price-check-row" style="font-weight:bold;font-size:14px">
-            <span class="price-check-name">Grand Total</span>
-            <span class="price-check-val">${fmt$(grandTotal)}</span>
+            <span class="price-check-name">${committedLabel}</span>
+            <span class="price-check-val">${fmt$(committedTotal)}</span>
         </div>
     </div>`;
+
+    // ── Options: side-by-side scenarios, each = committed baseline + option's own material ──
+    if (optionsGrp.length > 0) {
+        const sharedBaseline = committedTotal;
+        let optInner = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">';
+        optionsGrp.forEach((b) => {
+            const lbl = b.mat.label || `Option ${getOptionLetter(b.mat)}`;
+            const optionTotal = b.matSubtotal + sharedBaseline;
+            optInner += `<div style="flex:1;min-width:240px;background:#1a1a1a;border:1px solid #b09030;border-radius:4px;padding:6px;display:flex;flex-direction:column">
+                <div style="font-size:12px;font-weight:700;color:#b09030;margin-bottom:4px;text-align:center;border-bottom:1px solid #333;padding-bottom:3px">${lbl}</div>
+                <div style="flex:1">${b.html}</div>
+                <div style="font-size:10px;color:#999;margin-top:4px;padding:4px 0;border-top:1px dashed #333">
+                    <div style="display:flex;justify-content:space-between"><span>Option material + cut</span><span>${fmt$(b.matSubtotal)}</span></div>
+                    <div style="display:flex;justify-content:space-between"><span>+ Shared baseline</span><span>${fmt$(sharedBaseline)}</span></div>
+                </div>
+                <div style="text-align:right;margin-top:4px;padding:6px;background:#2d3a10;border-radius:4px;font-size:13px;font-weight:700;color:#b09030">${lbl} TOTAL: ${fmt$(optionTotal)}</div>
+            </div>`;
+        });
+        optInner += '</div>';
+        sumHtml += `<div class="room-pricing-section" style="margin-top:10px;border:2px dashed #b09030;border-radius:6px;padding:8px">
+            <div class="price-check-label" style="color:#b09030">CLIENT OPTIONS — select one</div>
+            <p style="font-size:9px;color:#999;margin:2px 0 8px;font-style:italic">Each option covers the whole project at its own slab price. The shared baseline above is added to every option.</p>
+            ${optInner}
+        </div>`;
+    }
 
     summaryContainer.innerHTML = sumHtml;
 
@@ -6785,10 +6802,12 @@ function calcRoomPricing(page) {
     }
 
     const matEntries = [];
-    let materialCostTotal = 0;  // pages + zones only (blending basis, excludes options)
+    let materialCostTotal = 0;
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
         const mtype = mat.type || 'zone';
+        // Skip Options — they are rendered in the final project summary, not per-page
+        if (mtype === 'option') continue;
         const mlabel = mat.label || '';
         const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
                          (mat.color||'').toLowerCase().includes('dekton') ||
@@ -6799,8 +6818,7 @@ function calcRoomPricing(page) {
         const cuttingRate = isDekton ? (pricingData.rates.dektonCoupe || 0) : (pricingData.rates.coupe || 0);
         const cuttingCost = msqft * cuttingRate;
         const entryPreT = matCost + cuttingCost;
-        // Options do not contribute to the blending basis or grand total
-        if (mtype !== 'option') materialCostTotal += entryPreT;
+        materialCostTotal += entryPreT;
         matEntries.push({
             color:     mat.color     || '',
             supplier:  mat.supplier  || '',
@@ -6817,23 +6835,16 @@ function calcRoomPricing(page) {
     const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
     const totalAddons = serviceItems.reduce((s, i) => s + i.cost, 0);
 
-    // Blend addons proportionally into page/zone entries only (Options are alternates)
-    const nonOptionEntries = matEntries.filter(m => m.mtype !== 'option');
+    // Blend addons proportionally into page/zone entries
     for (const m of matEntries) {
-        if (m.mtype === 'option') {
-            // Options: material cost only, no blended services
-            m.blendedPreT = m.preT;
-            m.total = m.preT * TAX;
-            continue;
-        }
         const share = materialCostTotal > 0
             ? (m.preT / materialCostTotal) * totalAddons
-            : (nonOptionEntries.length > 0 ? totalAddons / nonOptionEntries.length : 0);
+            : (matEntries.length > 0 ? totalAddons / matEntries.length : 0);
         m.blendedPreT = m.preT + share;
         m.total = m.blendedPreT * TAX;
     }
-    // If no page/zone materials but there are addons, create a single entry
-    if (nonOptionEntries.length === 0 && totalAddons > 0) {
+    // If no materials but there are addons, create a single entry
+    if (matEntries.length === 0 && totalAddons > 0) {
         matEntries.push({
             color:'Services', supplier:'', thickness:'', finish:'',
             preT: 0, blendedPreT: totalAddons, total: totalAddons * TAX,
@@ -6841,9 +6852,95 @@ function calcRoomPricing(page) {
         });
     }
 
-    // Grand room total excludes Options (they are alternates)
-    const roomTotal = matEntries.filter(m => m.mtype !== 'option').reduce((s,m) => s + m.total, 0);
+    const roomTotal = matEntries.reduce((s,m) => s + m.total, 0);
     return { roomSqft, matEntries, roomTotal };
+}
+
+// ── Project-wide Options summary (used for the PDF summary page) ───
+// Each option is a full-project scenario: its own slab across total sqft + cutting + all services + committed non-option materials.
+function calcOptionsSummary() {
+    const TAX = 1.14975;
+    // Total project sqft (all shapes across all pages)
+    let totalSqft = 0;
+    for (const page of pages) {
+        for (const s of page.shapes) {
+            if (s.subtype) continue;
+            let area = s.w * s.h;
+            if (s.shapeType === 'l')      area -= (s.notchW||0) * (s.notchH||0);
+            if (s.shapeType === 'u')      area  = uShapeAreaPx(s);
+            if (s.shapeType === 'circle') area  = Math.PI * (s.w/2) * (s.h/2);
+            if (s.farmSink)               area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+            totalSqft += area / SQFT_PX2;
+        }
+    }
+    // Shared services (all non-cutting line items, including polissage/install/measurements)
+    const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
+    const sharedServices = serviceItems.reduce((s, i) => s + i.cost, 0);
+
+    // Shared committed material cost (zone/page materials — these apply to every Option scenario)
+    let sharedCommittedMat = 0;
+    const committedMatsSqft = {};
+    for (const page of pages) {
+        for (const s of page.shapes) {
+            if (s.subtype) continue;
+            const mat = formData.materials.find(mm => mm.id === s.materialId);
+            if (!mat || (mat.type||'zone') === 'option') continue;
+            let area = s.w * s.h;
+            if (s.shapeType === 'l')      area -= (s.notchW||0) * (s.notchH||0);
+            if (s.shapeType === 'u')      area  = uShapeAreaPx(s);
+            if (s.shapeType === 'circle') area  = Math.PI * (s.w/2) * (s.h/2);
+            if (s.farmSink)               area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+            committedMatsSqft[mat.id] = (committedMatsSqft[mat.id]||0) + area / SQFT_PX2;
+        }
+    }
+    for (const [mid, msqft] of Object.entries(committedMatsSqft)) {
+        const mat = formData.materials.find(mm => mm.id === +mid) || {};
+        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
+                         (mat.color||'').toLowerCase().includes('dekton') ||
+                         (mat.thickness||'').toLowerCase().includes('dekton');
+        const pps = getMatPriceSqft(+mid);
+        const matCost = msqft * pps;
+        const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
+        sharedCommittedMat += matCost + msqft * cutRate;
+    }
+
+    const sharedBaseline = sharedServices + sharedCommittedMat;
+
+    // Per-option breakdowns
+    const options = [];
+    for (const mat of (formData.materials||[])) {
+        if ((mat.type||'zone') !== 'option') continue;
+        const label = mat.label || `Option ${getOptionLetter(mat)}`;
+        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
+                         (mat.color||'').toLowerCase().includes('dekton') ||
+                         (mat.thickness||'').toLowerCase().includes('dekton');
+
+        // Slab cost: prefer user overrides; else derive from DB slab size
+        const dbCostPerSlab = getMatCostPerSlab(mat.id);
+        const slabSqft = getMatSlabSqft(mat.id);
+        const suggestedQty = slabSqft > 0 ? Math.ceil(totalSqft / slabSqft) : 1;
+        const ov = (pricingData.slabOverrides||{})[mat.id] || {};
+        const slabQty = ov.qty != null ? ov.qty : suggestedQty;
+        const useCustom = ov.customPrice != null && ov.customPrice >= 0;
+        const pricePerSlab = useCustom ? ov.customPrice : dbCostPerSlab;
+        const slabCost = slabQty * pricePerSlab;
+
+        const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
+        const cuttingCost = totalSqft * cutRate;
+
+        const preT = slabCost + cuttingCost + sharedBaseline;
+        const total = preT * TAX;
+
+        options.push({
+            label, mat, isDekton,
+            color: mat.color||'', supplier: mat.supplier||'', thickness: mat.thickness||'', finish: mat.finish||'',
+            sqft: totalSqft, slabQty, pricePerSlab, slabCost,
+            cuttingRate: cutRate, cuttingCost,
+            sharedServices, sharedCommittedMat, sharedBaseline,
+            preT, total
+        });
+    }
+    return { options, totalSqft, sharedServices, sharedCommittedMat, sharedBaseline };
 }
 
 // ── Generate Proposal PDF (customer-facing) ───────────────────
@@ -7113,13 +7210,6 @@ function generateProposal() {
             doc.setDrawColor(200,185,140); doc.setLineWidth(0.3);
             doc.line(px+5, py2, px+pw-5, py2); py2 += 6;
         }
-        // If this page has any Option materials, print the selection note
-        if (matEntries.some(m => m.mtype === 'option')) {
-            doc.setFont('helvetica','italic'); doc.setFontSize(6.5); doc.setTextColor(130,110,55);
-            const note = 'Please select one option — pricing reflects each independently';
-            doc.text(doc.splitTextToSize(note, pw-10), px+5, py2);
-            py2 += 10;
-        }
 
         y += panelH + 16;
     }
@@ -7128,6 +7218,99 @@ function generateProposal() {
     selected = _pSavedSel; selectedDiag = _pSavedDiag; selectedText = _pSavedText;
     selectedJoint = _pSavedJoint; hovCorner = _pSavedHovC; hovEdge = _pSavedHovE;
     syncPageIn(); render();
+
+    // ── OPTIONS SUMMARY — client selects one (forced to its own final page) ──
+    const optsum = calcOptionsSummary();
+    if (optsum.options.length > 0) {
+        newPdfPage();
+        y = 90;
+        sectionHead('CLIENT OPTIONS — PLEASE SELECT ONE');
+        doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+        doc.text('Chaque option couvre l\'entièreté du projet.', ML, y, {maxWidth: CW});
+        y += 11;
+        doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(120,100,50);
+        doc.text('Each option covers the entire project — please select one.', ML, y, {maxWidth: CW});
+        y += 18;
+
+        const n = optsum.options.length;
+        const gap = 10;
+        const cardW = Math.min((CW - gap * (n - 1)) / n, 175);
+        const totalW = cardW * n + gap * (n - 1);
+        const startX = ML + (CW - totalW) / 2;
+        const cardH = 230;
+
+        for (let i = 0; i < n; i++) {
+            const op = optsum.options[i];
+            const cx = startX + i * (cardW + gap);
+            const cy = y;
+
+            // Card background + border
+            doc.setFillColor(252, 250, 243);
+            doc.setDrawColor(...ACCENT);
+            doc.setLineWidth(0.8);
+            doc.roundedRect(cx, cy, cardW, cardH, 4, 4, 'FD');
+
+            // Header bar
+            doc.setFillColor(...BRAND);
+            doc.rect(cx, cy, cardW, 18, 'F');
+            doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(255,255,255);
+            doc.text(op.label, cx + cardW/2, cy + 12, { align: 'center' });
+
+            // Material name + details
+            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+            doc.text(doc.splitTextToSize(op.color || 'Matériau', cardW - 10)[0], cx + 5, cy + 32);
+            const det = [op.supplier, op.thickness, op.finish].filter(Boolean).join(' • ');
+            if (det) {
+                doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(100,85,40);
+                doc.text(doc.splitTextToSize(det, cardW - 10)[0], cx + 5, cy + 42);
+            }
+
+            // Breakdown rows
+            let by = cy + 60;
+            const lnH = 11;
+            doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...BODY_T);
+            const rows = [
+                [`${op.sqft.toFixed(1)} sqft`, ''],
+                [`Slabs: ${op.slabQty} × ${fmt$(op.pricePerSlab)}`, fmt$(op.slabCost)],
+                [`${op.isDekton ? 'Dekton cut' : 'Découpe'}`, fmt$(op.cuttingCost)],
+                ['Services', fmt$(op.sharedServices)],
+            ];
+            if (op.sharedCommittedMat > 0) rows.push(['Fixed materials', fmt$(op.sharedCommittedMat)]);
+            for (const [k, v] of rows) {
+                doc.text(k, cx + 5, by);
+                if (v) doc.text(v, cx + cardW - 5, by, { align: 'right' });
+                by += lnH;
+            }
+
+            // Pre-tax
+            by += 6;
+            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
+            doc.line(cx + 5, by - 4, cx + cardW - 5, by - 4);
+            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(80,68,30);
+            doc.text('Avant taxes', cx + 5, by);
+            doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(130,110,55);
+            doc.text('before tax', cx + 5, by + 6);
+            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+            doc.text(fmt$(op.preT), cx + cardW - 5, by + 2, { align: 'right' });
+            by += 18;
+
+            // Total with tax (highlighted)
+            doc.setFillColor(...ACCENT);
+            doc.rect(cx + 3, by - 2, cardW - 6, 26, 'F');
+            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
+            doc.text('TOTAL', cx + 6, by + 8);
+            doc.setFont('helvetica','italic'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
+            doc.text('taxes incluses', cx + 6, by + 16);
+            doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...BRAND);
+            doc.text(fmt$(op.total), cx + cardW - 6, by + 14, { align: 'right' });
+        }
+
+        y += cardH + 14;
+        doc.setFont('helvetica','italic'); doc.setFontSize(7.5); doc.setTextColor(120,100,50);
+        const note = 'Veuillez choisir une option. / Please select one option — pricing reflects each scenario independently.';
+        const noteLines = doc.splitTextToSize(note, CW);
+        for (const ln of noteLines) { doc.text(ln, PW/2, y, { align: 'center' }); y += 10; }
+    }
 
     // Notes
     if (formData.notes && formData.notes.trim()) {
