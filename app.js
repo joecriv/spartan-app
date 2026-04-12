@@ -7349,14 +7349,12 @@ function exportPDF() {
 }
 
 // ── Print ─────────────────────────────────────────────────────
-function printQuote() { window.print(); }
 
 // ── Wire buttons ──────────────────────────────────────────────
 document.getElementById('btn-save-quote').addEventListener('click', saveQuote);
 document.getElementById('btn-load-quote').addEventListener('click', loadQuote);
 document.getElementById('btn-new-quote').addEventListener('click', newQuote);
 document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
-document.getElementById('btn-print-quote').addEventListener('click', printQuote);
 
 // ─────────────────────────────────────────────────────────────
 //  Layout PDF Export
