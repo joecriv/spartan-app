@@ -4874,7 +4874,8 @@ function calcServiceQtys() {
             // Check if material is Dekton
             const mid = s.materialId || (formData.materials[0] && formData.materials[0].id) || 0;
             const mat = formData.materials.find(m => m.id === mid) || {};
-            const isDekton = (mat.color || '').toLowerCase().includes('dekton') ||
+            const isDekton = (mat.supplier || '').toLowerCase().includes('dekton') ||
+                             (mat.color || '').toLowerCase().includes('dekton') ||
                              (mat.thickness || '').toLowerCase().includes('dekton') ||
                              (mat.notes || '').toLowerCase().includes('dekton');
             if (isDekton) dektonCoupeSqft += sqft;
@@ -5037,7 +5038,8 @@ function renderPricingPanel() {
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
         const matName = [mat.color, mat.thickness].filter(Boolean).join(' · ') || 'Material';
-        const isDekton = (mat.color||'').toLowerCase().includes('dekton') ||
+        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
+                         (mat.color||'').toLowerCase().includes('dekton') ||
                          (mat.thickness||'').toLowerCase().includes('dekton') ||
                          (mat.notes||'').toLowerCase().includes('dekton');
         const dbCostPerSlab = getMatCostPerSlab(+mid);
@@ -6688,7 +6690,8 @@ function calcRoomPricing(page) {
     let materialCostTotal = 0;
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const mat = formData.materials.find(m => m.id === +mid) || {};
-        const isDekton = (mat.color||'').toLowerCase().includes('dekton') ||
+        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
+                         (mat.color||'').toLowerCase().includes('dekton') ||
                          (mat.thickness||'').toLowerCase().includes('dekton') ||
                          (mat.notes||'').toLowerCase().includes('dekton');
         const pps = getMatPriceSqft(+mid);
