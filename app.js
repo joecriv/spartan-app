@@ -6767,41 +6767,13 @@ function slabAllPieces() {
             const hCuts = hJoints.length > 0 ? [0, ...hJoints, hi] : [0, hi];
             let segCount = 0;
 
-            // ── Rect-decomposition clipping ──────────────────────────
-            // For axis-aligned shapes, decompose into rectangles first, then
-            // intersect each rect with each joint grid cell. Guarantees clean
-            // rectangular pieces — avoids the Sutherland-Hodgman boundary
-            // degeneracy that produced sliver pieces when the joint aligned
-            // with an inside corner (e.g. L-shape notch).
-            const decompRects = shapeLocalRects(s);
-            if (decompRects) {
-                for (let vi = 0; vi < vCuts.length - 1; vi++) {
-                    for (let hj = 0; hj < hCuts.length - 1; hj++) {
-                        for (const rc of decompRects) {
-                            const xLo = Math.max(rc.x,          vCuts[vi]);
-                            const xHi = Math.min(rc.x + rc.w,   vCuts[vi+1]);
-                            const yLo = Math.max(rc.y,          hCuts[hj]);
-                            const yHi = Math.min(rc.y + rc.h,   hCuts[hj+1]);
-                            const w = xHi - xLo, h = yHi - yLo;
-                            if (w <= 1e-4 || h <= 1e-4) continue;
-                            out.push({
-                                pageIdx: pi, shapeIdx: si,
-                                label: `${baseLabel}-${SEG_LETTERS[segCount]||segCount+1}`,
-                                pageLabel,
-                                wi: +w.toFixed(6), hi: +h.toFixed(6),
-                                shapeType: 'rect', segIdx: segCount,
-                                segOffset: { fromX: xLo, fromY: yLo, toX: xHi, toY: yHi },
-                                segPoly: null
-                            });
-                            segCount++;
-                        }
-                    }
-                }
-                return;
-            }
-
-            // ── Fallback: Sutherland-Hodgman for shapes we can't decompose
-            //    (chamfered, rounded, circle, farmSink, etc.)
+            // ── Polygon clipping + cleanup ───────────────────────────
+            // Each joint grid cell yields ONE piece: the shape's polygon clipped
+            // to that strip. The cleanup pass removes degenerate slits that
+            // Sutherland-Hodgman produces when a clip line aligns with a
+            // polygon edge (e.g. joint snapped to an inside corner). This keeps
+            // multi-rect shapes (U/BSP) together as a single piece per cell,
+            // while still giving clean rectangles when the joint cuts cleanly.
             for (let vi = 0; vi < vCuts.length - 1; vi++) {
                 for (let hj = 0; hj < hCuts.length - 1; hj++) {
                     const xLo = vCuts[vi], xHi = vCuts[vi+1];
@@ -6809,6 +6781,7 @@ function slabAllPieces() {
                     const basePoly = shapeLocalPolyInches(s);
                     let clipped = clipPolyToStrip(basePoly, xLo, xHi, true);
                     clipped = clipPolyToStrip(clipped, yLo, yHi, false);
+                    clipped = cleanClippedPolygon(clipped);
                     if (clipped.length < 3) continue;
                     const xs = clipped.map(p=>p[0]), ys = clipped.map(p=>p[1]);
                     const minX=Math.min(...xs), maxX=Math.max(...xs);
@@ -6831,6 +6804,46 @@ function slabAllPieces() {
             }
         });
     });
+    return out;
+}
+
+// Removes degenerate vertices from a clipped polygon:
+//   - consecutive duplicates (zero-length edges)
+//   - collinear middle vertices (Sutherland-Hodgman leaves these when a clip
+//     line coincides with a polygon edge, which creates a "slit" along the
+//     clip line that distorts the vertex bounding box but has zero area)
+// After cleanup, a polygon that encloses a pure rectangle has exactly 4
+// vertices at the corners.
+function cleanClippedPolygon(pts) {
+    if (!pts || pts.length === 0) return pts;
+    const EPS = 1e-5;
+    // 1. Remove consecutive duplicates
+    let out = [];
+    for (let i = 0; i < pts.length; i++) {
+        const [x, y] = pts[i];
+        if (out.length === 0 || Math.abs(out[out.length-1][0] - x) > EPS || Math.abs(out[out.length-1][1] - y) > EPS) {
+            out.push([x, y]);
+        }
+    }
+    while (out.length > 1 && Math.abs(out[0][0] - out[out.length-1][0]) < EPS && Math.abs(out[0][1] - out[out.length-1][1]) < EPS) {
+        out.pop();
+    }
+    // 2. Iteratively remove collinear middle vertices
+    let changed = true;
+    while (changed && out.length > 3) {
+        changed = false;
+        for (let i = 0; i < out.length; i++) {
+            const prev = out[(i - 1 + out.length) % out.length];
+            const curr = out[i];
+            const next = out[(i + 1) % out.length];
+            const cross = (curr[0] - prev[0]) * (next[1] - curr[1]) - (curr[1] - prev[1]) * (next[0] - curr[0]);
+            if (Math.abs(cross) < EPS) {
+                out.splice(i, 1);
+                changed = true;
+                break;
+            }
+        }
+    }
     return out;
 }
 
