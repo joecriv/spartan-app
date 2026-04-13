@@ -1090,7 +1090,38 @@ function nearestEdge(mx, my) {
 function nearestCornerForEdge(mx, my) {
     const THRESH = 18;
     for (const s of shapes) {
-        if (s.shapeType === 'l' || s.shapeType === 'u' || s.shapeType === 'bsp' || s.shapeType === 'circle') continue;
+        if (s.shapeType === 'bsp' || s.shapeType === 'circle') continue;
+        // L-shape: each vertex can have a radius. Pick the arc midpoint via pin/pout.
+        if (s.shapeType === 'l') {
+            const verts = lShapeVerts(s);
+            for (let i = 0; i < verts.length; i++) {
+                const nv = verts[i];
+                if (!(nv.r > 0)) continue;
+                // Arc midpoint ≈ midpoint of pin→pout swept around curr
+                const midX = (nv.pin[0] + nv.pout[0]) / 2;
+                const midY = (nv.pin[1] + nv.pout[1]) / 2;
+                // Push outward from curr by a small factor so the pick point lands on the arc
+                const dx = midX - nv.curr[0], dy = midY - nv.curr[1];
+                const d = Math.hypot(dx, dy) || 1;
+                const mpx = nv.curr[0] + (dx/d) * nv.r;
+                const mpy = nv.curr[1] + (dy/d) * nv.r;
+                if (Math.hypot(mx - mpx, my - mpy) < THRESH) return { s, key: `lc${i}`, px: mpx, py: mpy };
+            }
+            continue;
+        }
+        // U-shape: radius via s.corners.uc{i} (rendered via polygon approximation — treated best-effort)
+        if (s.shapeType === 'u') {
+            const poly = uShapePolygon(s);
+            const n = poly.length;
+            for (let i = 0; i < n; i++) {
+                const rad = (s.corners && s.corners[`uc${i}`]) || 0;
+                if (rad <= 0) continue;
+                const px = poly[i][0], py = poly[i][1];
+                if (Math.hypot(mx - px, my - py) < THRESH) return { s, key: `uc${i}`, px, py };
+            }
+            continue;
+        }
+        // Rectangle (default)
         const r = shapeRadii(s);
         const corners = [
             { key:'nw', cx:s.x+r.nw,     cy:s.y+r.nw,     startA:Math.PI,       endA:1.5*Math.PI, r:r.nw },
@@ -1798,13 +1829,46 @@ function drawLShape(s, sel) {
                     }
                 }
             } else {
-                ctx.save(); ctx.strokeStyle=sel?'#b09030':'#222222'; ctx.lineWidth=sel?2:0.8; ctx.setLineDash([]);
+                // Radius arc — honor cornerEdges[lc_i].type styling (same palette as rect corner arcs)
+                const lckey = `lc${(i+1)%n}`;
+                const ctype = s.cornerEdges?.[lckey]?.type || 'none';
+                ctx.save();
+                if (sel && ctype === 'none') { ctx.strokeStyle = '#b09030'; ctx.lineWidth = 2; ctx.setLineDash([]); }
+                else if (ctype === 'none')   { ctx.strokeStyle = '#222222'; ctx.lineWidth = 0.8; ctx.setLineDash([]); }
+                else if (ctype === 'polished' || ctype === 'pencil') { ctx.strokeStyle = '#dd0000'; ctx.lineWidth = 2.5; ctx.setLineDash([]); }
+                else if (ctype === 'ogee')      { ctx.strokeStyle = '#cc44cc'; ctx.lineWidth = 2.5; ctx.setLineDash([]); }
+                else if (ctype === 'bullnose')  { ctx.strokeStyle = '#0088dd'; ctx.lineWidth = 4;   ctx.setLineDash([]); }
+                else if (ctype === 'halfbull')  { ctx.strokeStyle = '#00aa66'; ctx.lineWidth = 2.5; ctx.setLineDash([]); }
+                else if (ctype === 'bevel')     { ctx.strokeStyle = '#dd8800'; ctx.lineWidth = 2.5; ctx.setLineDash([]); }
+                else if (ctype === 'mitered')   { ctx.strokeStyle = '#7a3000'; ctx.lineWidth = 2;   ctx.setLineDash([4,3]); }
+                else if (ctype === 'special')   { ctx.strokeStyle = '#228B22'; ctx.lineWidth = 2.5; ctx.setLineDash([]); }
+                else if (ctype === 'joint')     { ctx.strokeStyle = '#e0457b'; ctx.lineWidth = 2;   ctx.setLineDash([5,4]); }
+                else if (ctype === 'waterfall') { ctx.strokeStyle = '#006688'; ctx.lineWidth = 2;   ctx.setLineDash([]); }
                 ctx.beginPath(); ctx.moveTo(nv.pin[0],nv.pin[1]);
                 ctx.arcTo(nv.curr[0],nv.curr[1],nv.pout[0],nv.pout[1],nv.r); ctx.stroke();
-                const lx=nv.curr[0], ly=nv.curr[1];
-                ctx.font='8px Raleway,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-                ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.8)';
-                ctx.strokeText(`R${pxToIn(nv.r)}"`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToIn(nv.r)}"`,lx,ly);
+                // Edge profile abbreviation badge near arc midpoint
+                const def = EDGE_DEFS[ctype];
+                if (ctype !== 'none' && def?.abbr) {
+                    const midX = (nv.pin[0] + nv.pout[0]) / 2;
+                    const midY = (nv.pin[1] + nv.pout[1]) / 2;
+                    const odx = midX - nv.curr[0], ody = midY - nv.curr[1];
+                    const od = Math.hypot(odx, ody) || 1;
+                    const arcMx = nv.curr[0] + (odx/od) * nv.r;
+                    const arcMy = nv.curr[1] + (ody/od) * nv.r;
+                    const ox = (odx/od) * 12, oy = (ody/od) * 12;
+                    ctx.setLineDash([]);
+                    ctx.font='bold 9px Raleway,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                    ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.85)';
+                    ctx.strokeText(def.abbr, arcMx+ox, arcMy+oy);
+                    ctx.fillStyle = def.color; ctx.fillText(def.abbr, arcMx+ox, arcMy+oy);
+                }
+                // Radius label (only when no edge profile — otherwise it crowds the badge)
+                if (ctype === 'none') {
+                    const lx=nv.curr[0], ly=nv.curr[1];
+                    ctx.font='8px Raleway,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                    ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.8)';
+                    ctx.strokeText(`R${pxToIn(nv.r)}"`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToIn(nv.r)}"`,lx,ly);
+                }
                 ctx.restore();
             }
         }
@@ -4234,6 +4298,7 @@ const SERVICE_RATE_DEFS = [
     { key:'evierUnder',    label:'Evier under',     desc:'Trou et polissage pour evier sous plan (undermount)',unit:'each' },
     { key:'evierVasque',   label:'Evier vasque',    desc:'Trou pour lavabo type vasque',                       unit:'each' },
     { key:'cooktop',       label:'Cooktop',         desc:'Trou pour cuisinière (cooktop)',                     unit:'each' },
+    { key:'farmSink',      label:'Farmhouse sink',  desc:'Évier farmhouse (intégré)',                          unit:'each' },
     { key:'fini45',        label:'Fini 45',         desc:'Finition laminée en 45',                             unit:'lf' },
     { key:'lamine',        label:'Lamine',          desc:'Assemblage des morceaux (Laminage)',                  unit:'lf' },
     { key:'polissageSous', label:'Polissage sous',  desc:'Polissage sous morceau',                             unit:'each' },
@@ -4900,15 +4965,22 @@ function calcPageEdgeLinearFt(page, edgeType) {
             for (const sd of sides) {
                 totalPx += edgeContribPx(s, sd.key, sd.x1, sd.y1, sd.x2, sd.y2, edgeType);
             }
-            // chamfer diagonals on L-shapes
+            // L-shape per-vertex corner treatments (chamfer diagonals AND radius arcs)
             if (typeof lShapeVerts === 'function') {
                 const verts = lShapeVerts(s);
                 for (let i = 0; i < verts.length; i++) {
                     const nv = verts[i];
                     if (nv.t > 0 && nv.r === 0) {
+                        // chamfer diagonal
                         const dk = `diag_lc${i}`;
                         if (s.chamferEdges?.[dk]?.type === edgeType) {
                             totalPx += Math.hypot(nv.pout[0]-nv.pin[0], nv.pout[1]-nv.pin[1]);
+                        }
+                    } else if (nv.r > 0) {
+                        // radius arc (quarter-circle length)
+                        const ck = `lc${i}`;
+                        if (s.cornerEdges?.[ck]?.type === edgeType) {
+                            totalPx += Math.PI / 2 * nv.r;
                         }
                     }
                 }
@@ -4917,6 +4989,14 @@ function calcPageEdgeLinearFt(page, edgeType) {
             const sides = uShapeSides(s);
             for (const sd of sides) {
                 totalPx += edgeContribPx(s, sd.key, sd.x1, sd.y1, sd.x2, sd.y2, edgeType);
+            }
+            // U-shape radius arcs (best-effort: rendered as polygon corners currently)
+            const poly = uShapePolygon(s);
+            for (let i = 0; i < poly.length; i++) {
+                const rad = (s.corners && s.corners[`uc${i}`]) || 0;
+                if (rad > 0 && s.cornerEdges?.[`uc${i}`]?.type === edgeType) {
+                    totalPx += Math.PI / 2 * rad;
+                }
             }
         } else if (s.shapeType === 'bsp') {
             const sides = bspSides(s);
@@ -4965,21 +5045,23 @@ function calcPageEdgeLinearFt(page, edgeType) {
 }
 
 function calcPageSinkCounts(page) {
-    let overmount = 0, undermount = 0, vasque = 0, cooktops = 0;
+    let overmount = 0, undermount = 0, vasque = 0, cooktops = 0, farmSinks = 0;
     for (const s of page.shapes) {
         if (s.subtype === 'sink_overmount') overmount++;
         else if (s.subtype === 'sink_undermount') undermount++;
         else if (s.subtype === 'sink_vasque') vasque++;
         else if (s.subtype === 'cooktop') cooktops++;
+        // Farmhouse sinks are a property on a countertop shape, not a separate subtype
+        if (!s.subtype && s.farmSink) farmSinks++;
     }
-    return { overmount, undermount, vasque, cooktops };
+    return { overmount, undermount, vasque, cooktops, farmSinks };
 }
 
 // ── Compute service quantities for the new rate model ────────
 // Returns { pencilLf, coupeSqft, dektonCoupeSqft, evierOver, evierUnder, evierVasque, fini45Lf, lamineLf, polissageSousQty }
 function calcServiceQtys() {
     let pencilLf = 0, coupeSqft = 0, dektonCoupeSqft = 0;
-    let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0;
+    let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0, farmSinkQty = 0;
     let fini45Lf = 0, lamineLf = 0;
     let totalSqft = 0;
     for (const page of pages) {
@@ -4995,6 +5077,7 @@ function calcServiceQtys() {
         evierUnder += sinks.undermount;
         evierVasque += sinks.vasque;
         cooktopQty += sinks.cooktops;
+        farmSinkQty += sinks.farmSinks;
         // Material area — split by Dekton vs non-Dekton
         for (const s of page.shapes) {
             if (s.subtype) continue;
@@ -5020,7 +5103,7 @@ function calcServiceQtys() {
     return {
         pencilLf, coupeSqft, dektonCoupeSqft,
         evierOver, evierUnder, evierVasque,
-        cooktopQty,
+        cooktopQty, farmSinkQty,
         fini45Lf, lamineLf,
         polissageSousQty: pricingData.polissageSousQty || 0,
         installationSqft: totalSqft,
@@ -5042,6 +5125,7 @@ function getServiceLineItems() {
             case 'evierUnder':    qty = q.evierUnder;        unitLabel = `${qty} trou(s)`; break;
             case 'evierVasque':   qty = q.evierVasque;       unitLabel = `${qty} trou(s)`; break;
             case 'cooktop':       qty = q.cooktopQty;        unitLabel = `${qty} trou(s)`; break;
+            case 'farmSink':      qty = q.farmSinkQty;       unitLabel = `${qty} évier(s)`; break;
             case 'fini45':        qty = q.fini45Lf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'lamine':        qty = q.lamineLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `× ${qty}`; break;
@@ -6818,19 +6902,27 @@ function calcPageEdgeFootage(page) {
             for (const sd of sides) {
                 addEdge(s.edges?.[sd.key], Math.hypot(sd.x2-sd.x1, sd.y2-sd.y1));
             }
-            // chamfer diagonals
+            // L-shape per-vertex treatments (chamfer diagonals OR radius arcs)
             const verts = lShapeVerts(s);
             for (let i = 0; i < verts.length; i++) {
                 const nv = verts[i];
                 if (nv.t > 0 && nv.r === 0) {
                     const dk = `diag_lc${i}`;
                     addSeg(s.chamferEdges?.[dk]?.type, Math.hypot(nv.pout[0]-nv.pin[0], nv.pout[1]-nv.pin[1]));
+                } else if (nv.r > 0) {
+                    addSeg(s.cornerEdges?.[`lc${i}`]?.type, Math.PI / 2 * nv.r);
                 }
             }
         } else if (s.shapeType === 'u') {
             const sides = uShapeSides(s);
             for (const sd of sides) {
                 addEdge(s.edges?.[sd.key], Math.hypot(sd.x2-sd.x1, sd.y2-sd.y1));
+            }
+            // U-shape radius arcs (best-effort)
+            const poly = uShapePolygon(s);
+            for (let i = 0; i < poly.length; i++) {
+                const rad = (s.corners && s.corners[`uc${i}`]) || 0;
+                if (rad > 0) addSeg(s.cornerEdges?.[`uc${i}`]?.type, Math.PI / 2 * rad);
             }
         } else if (s.shapeType === 'bsp') {
             const sides = bspSides(s);
@@ -6912,15 +7004,16 @@ function calcPagePricing(page) {
     const evierUnderCost  = sinks.undermount * (pricingData.rates.evierUnder  || 0);
     const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
     const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
+    const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
 
-    const servicesCost  = pencilCost + fini45Cost + lamineCost + evierOverCost + evierUnderCost + evierVasqueCost + cooktopCost;
+    const servicesCost  = pencilCost + fini45Cost + lamineCost + evierOverCost + evierUnderCost + evierVasqueCost + cooktopCost + farmSinkCost;
     const pageSubtotal  = matCost + cutCost + servicesCost;
 
     return {
         page, pageMat, roomSqft, isDekton,
         matCost, cutCost, cutRate,
         edgeFootage, pencilLf, fini45Lf, lamineLf, pencilCost, fini45Cost, lamineCost,
-        sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost,
+        sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost, farmSinkCost,
         servicesCost, pageSubtotal
     };
 }
@@ -7369,6 +7462,7 @@ function generateProposal() {
         if (sinks.undermount > 0) serviceRows.push(['Évier undermount', sinks.undermount]);
         if (sinks.vasque     > 0) serviceRows.push(['Évier vasque',     sinks.vasque]);
         if (sinks.cooktops   > 0) serviceRows.push(['Cooktop',          sinks.cooktops]);
+        if (sinks.farmSinks  > 0) serviceRows.push(['Farmhouse sink',   sinks.farmSinks]);
         if (serviceRows.length > 0) {
             doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
             doc.text('SERVICES', px+5, py2);
