@@ -4730,6 +4730,24 @@ function loadMatDb() {
     matDbNextId = _id;
     saveMatDb();
 }
+// Stone types that appear in the matdb dropdown
+const STONE_TYPES = ['Quartz','Granite','Marble','Quartzite','Sintered Stone'];
+const STANDARD_FINISHES     = ['Polished','Matte','Honed','Leathered','Velvet','Grip+','Satin','Brushed'];
+const STANDARD_THICKNESSES  = ['0.8cm','1.2cm','2cm','3cm'];
+
+// Union of all finishes / thicknesses known across matDb + the standard starters
+function allKnownFinishes() {
+    const s = new Set(STANDARD_FINISHES);
+    for (const m of matDb) (m.finishes || []).forEach(f => s.add(f));
+    return [...s];
+}
+function allKnownThicknesses() {
+    const s = new Set(STANDARD_THICKNESSES);
+    for (const m of matDb) (m.thicknesses || []).forEach(t => s.add(t));
+    // Sort numerically by the "cm" prefix number
+    return [...s].sort((a, b) => parseFloat(a) - parseFloat(b));
+}
+
 function renderMatDb() {
     const container = document.getElementById('matdb-rows');
     if (!container) return;
@@ -4737,29 +4755,49 @@ function renderMatDb() {
         container.innerHTML = '<p class="price-internal-note" style="margin:0">No materials in database yet.</p>';
         return;
     }
+    const allF = allKnownFinishes();
+    const allT = allKnownThicknesses();
     container.innerHTML = matDb.map(m => {
-        const thk = (m.thicknesses||[]).join(', ');
-        const fin = (m.finishes||[]).join(', ');
-        return `<div class="mat-row" data-dbid="${m.id}" style="padding:5px 8px">
+        const selF = new Set(m.finishes || []);
+        const selT = new Set(m.thicknesses || []);
+        return `<div class="mat-row" data-dbid="${m.id}" style="padding:6px 8px">
             <button class="mat-remove matdb-remove" data-dbid="${m.id}" title="Remove">×</button>
+            <!-- Row 1: name + brand + stone type -->
             <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
-                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="name" style="flex:1;min-width:100px" value="${m.name||''}" placeholder="Color name">
-                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="supplier" style="width:80px" value="${m.supplier||''}" placeholder="Brand">
-                <div style="display:flex;align-items:center;gap:3px">
-                    <span class="mat-lbl" style="margin:0;white-space:nowrap">Cost/slab $</span>
-                    <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="costPerSlab" type="number" min="0" step="1" style="width:70px" value="${m.costPerSlab||''}" placeholder="0">
-                </div>
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="name" style="flex:1;min-width:100px" value="${(m.name||'').replace(/"/g,'&quot;')}" placeholder="Color name">
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="supplier" style="width:90px" value="${(m.supplier||'').replace(/"/g,'&quot;')}" placeholder="Brand">
+                <select class="mat-input matdb-field" data-dbid="${m.id}" data-field="stoneType" style="width:120px">
+                    <option value="">— Type —</option>
+                    ${STONE_TYPES.map(t => `<option value="${t}" ${m.stoneType===t?'selected':''}>${t}</option>`).join('')}
+                </select>
             </div>
+            <!-- Row 2: cost + slab size -->
             <div style="display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap">
-                <div style="display:flex;align-items:center;gap:3px">
-                    <span class="mat-lbl" style="margin:0">Slab</span>
-                    <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabW" type="number" min="1" step="1" style="width:45px" value="${m.slabW||''}" placeholder="W">
-                    <span style="color:#777;font-size:10px">×</span>
-                    <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabH" type="number" min="1" step="1" style="width:45px" value="${m.slabH||''}" placeholder="H">
-                    <span style="color:#777;font-size:9px">in</span>
-                </div>
-                <span style="color:#666;font-size:9px">${thk ? 'Thick: '+thk : ''}</span>
-                <span style="color:#666;font-size:9px">${fin ? 'Finish: '+fin : ''}</span>
+                <span class="mat-lbl" style="margin:0;white-space:nowrap">Cost/slab $</span>
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="costPerSlab" type="number" min="0" step="1" style="width:70px" value="${m.costPerSlab||''}" placeholder="0">
+                <span class="mat-lbl" style="margin:0;margin-left:8px">Slab</span>
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabW" type="number" min="1" step="1" style="width:45px" value="${m.slabW||''}" placeholder="W">
+                <span style="color:#777;font-size:10px">×</span>
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabH" type="number" min="1" step="1" style="width:45px" value="${m.slabH||''}" placeholder="H">
+                <span style="color:#777;font-size:9px">in</span>
+            </div>
+            <!-- Row 3: thickness checkboxes + add custom -->
+            <div style="display:flex;gap:6px;margin-top:5px;align-items:center;flex-wrap:wrap">
+                <span class="mat-lbl" style="margin:0;min-width:55px">Thickness</span>
+                ${allT.map(t => `<label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#ccc;cursor:pointer;padding:2px 5px;background:#1a1a1a;border:1px solid ${selT.has(t)?'#b09030':'#333'};border-radius:3px">
+                    <input type="checkbox" class="matdb-thk" data-dbid="${m.id}" data-value="${t}" ${selT.has(t)?'checked':''} style="cursor:pointer;margin:0">
+                    ${t}
+                </label>`).join('')}
+                <button class="matdb-add-thk" data-dbid="${m.id}" style="padding:2px 7px;background:#2a2a2a;color:#b09030;border:1px dashed #555;border-radius:3px;font-size:10px;cursor:pointer">+ custom</button>
+            </div>
+            <!-- Row 4: finish checkboxes + add custom -->
+            <div style="display:flex;gap:6px;margin-top:5px;align-items:center;flex-wrap:wrap">
+                <span class="mat-lbl" style="margin:0;min-width:55px">Finish</span>
+                ${allF.map(f => `<label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#ccc;cursor:pointer;padding:2px 5px;background:#1a1a1a;border:1px solid ${selF.has(f)?'#b09030':'#333'};border-radius:3px">
+                    <input type="checkbox" class="matdb-fin" data-dbid="${m.id}" data-value="${f.replace(/"/g,'&quot;')}" ${selF.has(f)?'checked':''} style="cursor:pointer;margin:0">
+                    ${f}
+                </label>`).join('')}
+                <button class="matdb-add-fin" data-dbid="${m.id}" style="padding:2px 7px;background:#2a2a2a;color:#b09030;border:1px dashed #555;border-radius:3px;font-size:10px;cursor:pointer">+ custom</button>
             </div>
         </div>`;
     }).join('');
@@ -4772,9 +4810,52 @@ function renderMatDb() {
         matDb = matDb.filter(m => m.id !== +e.target.dataset.dbid);
         saveMatDb(); renderMatDb();
     }));
+    // Thickness checkbox toggles
+    container.querySelectorAll('.matdb-thk').forEach(cb => cb.addEventListener('change', e => {
+        const db = matDb.find(m => m.id === +e.target.dataset.dbid);
+        if (!db) return;
+        db.thicknesses = db.thicknesses || [];
+        const v = e.target.dataset.value;
+        if (e.target.checked) { if (!db.thicknesses.includes(v)) db.thicknesses.push(v); }
+        else db.thicknesses = db.thicknesses.filter(x => x !== v);
+        saveMatDb(); renderMatDb();
+    }));
+    // Finish checkbox toggles
+    container.querySelectorAll('.matdb-fin').forEach(cb => cb.addEventListener('change', e => {
+        const db = matDb.find(m => m.id === +e.target.dataset.dbid);
+        if (!db) return;
+        db.finishes = db.finishes || [];
+        const v = e.target.dataset.value;
+        if (e.target.checked) { if (!db.finishes.includes(v)) db.finishes.push(v); }
+        else db.finishes = db.finishes.filter(x => x !== v);
+        saveMatDb(); renderMatDb();
+    }));
+    // Add custom thickness / finish
+    container.querySelectorAll('.matdb-add-thk').forEach(btn => btn.addEventListener('click', e => {
+        const db = matDb.find(m => m.id === +e.target.dataset.dbid);
+        if (!db) return;
+        const raw = prompt('Add a custom thickness (e.g. 2cm, 1.2cm, 6cm):');
+        if (!raw) return;
+        const v = raw.trim();
+        if (!v) return;
+        db.thicknesses = db.thicknesses || [];
+        if (!db.thicknesses.includes(v)) db.thicknesses.push(v);
+        saveMatDb(); renderMatDb();
+    }));
+    container.querySelectorAll('.matdb-add-fin').forEach(btn => btn.addEventListener('click', e => {
+        const db = matDb.find(m => m.id === +e.target.dataset.dbid);
+        if (!db) return;
+        const raw = prompt('Add a custom finish (e.g. Leathered, Satin, Anticato):');
+        if (!raw) return;
+        const v = raw.trim();
+        if (!v) return;
+        db.finishes = db.finishes || [];
+        if (!db.finishes.includes(v)) db.finishes.push(v);
+        saveMatDb(); renderMatDb();
+    }));
 }
 document.getElementById('matdb-add-btn').addEventListener('click', () => {
-    matDb.push({ id: matDbNextId++, name:'', supplier:'', thicknesses:['2cm','3cm'], finishes:['Polished'], slabW:129, slabH:63, costPerSlab:0 });
+    matDb.push({ id: matDbNextId++, name:'', supplier:'', stoneType:'', thicknesses:['2cm','3cm'], finishes:['Polished'], slabW:129, slabH:63, costPerSlab:0 });
     saveMatDb();
     renderMatDb();
     const rows = document.querySelectorAll('#matdb-rows .mat-row');
