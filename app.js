@@ -4774,11 +4774,11 @@ function renderMatDb() {
             <!-- Row 2: cost + slab size -->
             <div style="display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap">
                 <span class="mat-lbl" style="margin:0;white-space:nowrap">Cost/slab $</span>
-                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="costPerSlab" type="number" min="0" step="1" style="width:70px" value="${m.costPerSlab||''}" placeholder="0">
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="costPerSlab" type="text" inputmode="decimal" style="width:70px" value="${m.costPerSlab||''}" placeholder="0">
                 <span class="mat-lbl" style="margin:0;margin-left:8px">Slab</span>
-                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabW" type="number" min="1" step="1" style="width:45px" value="${m.slabW||''}" placeholder="W">
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabW" type="text" inputmode="numeric" style="width:45px" value="${m.slabW||''}" placeholder="W">
                 <span style="color:#777;font-size:10px">×</span>
-                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabH" type="number" min="1" step="1" style="width:45px" value="${m.slabH||''}" placeholder="H">
+                <input class="mat-input matdb-field" data-dbid="${m.id}" data-field="slabH" type="text" inputmode="numeric" style="width:45px" value="${m.slabH||''}" placeholder="H">
                 <span style="color:#777;font-size:9px">in</span>
             </div>
             <!-- Row 3: thickness checkboxes + add custom -->
@@ -5258,7 +5258,7 @@ function renderCostsPanel() {
                     </div>
                     <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
                         <span style="color:#888;font-size:10px">$/slab</span>
-                        <input class="mat-input cost-slab-inp" data-dbid="${m.id}" type="number" min="0" step="1" style="width:75px;text-align:right" value="${m.costPerSlab||''}" placeholder="0">
+                        <input class="mat-input cost-slab-inp" data-dbid="${m.id}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${m.costPerSlab||''}" placeholder="0">
                     </div>
                     <div class="cost-sqft-lbl" data-dbid="${m.id}" style="color:#999;font-size:9px;width:55px;text-align:right;flex-shrink:0">${perSqft}/sqft</div>
                 </div>`;
@@ -5286,12 +5286,12 @@ function renderCostsPanel() {
         const unitLabels = { lf:'$/lin ft', sqft:'$/sqft', each:'$ / each' };
         let html = SERVICE_RATE_DEFS.map(f => `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333">
             <span style="flex:1;color:#e0ddd5;font-size:11px">${f.label} <span style="color:#555;font-size:9px">${unitLabels[f.unit]||''}</span></span>
-            <input class="mat-input cost-rate-inp" data-rkey="${f.key}" type="number" min="0" step="0.01" style="width:75px;text-align:right" value="${R[f.key]||0}">
+            <input class="mat-input cost-rate-inp" data-rkey="${f.key}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${R[f.key]||0}">
         </div>`).join('');
         // Installation minimum fee row
         html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333;background:#181818">
             <span style="flex:1;color:#e0ddd5;font-size:11px">Installation min. fee <span style="color:#555;font-size:9px">$ flat floor</span></span>
-            <input class="mat-input cost-inst-min-inp" type="number" min="0" step="1" style="width:75px;text-align:right" value="${pricingData.installationMin||0}">
+            <input class="mat-input cost-inst-min-inp" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${pricingData.installationMin||0}">
         </div>`;
         rateContainer.innerHTML = html;
         rateContainer.querySelectorAll('.cost-rate-inp').forEach(inp => inp.addEventListener('input', e => {
@@ -5379,11 +5379,11 @@ function renderPricingPanel() {
             <div style="font-size:9px;color:#888;margin-bottom:4px">${msqft.toFixed(2)} sqft total · suggested ${suggestedQty} slab${suggestedQty!==1?'s':''}</div>
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
                 <span style="font-size:10px;color:#999;min-width:50px">Qty slabs</span>
-                <input class="mat-input pricing-slab-qty" data-mid="${mid}" type="number" min="0" step="1" value="${slabQty}" style="width:60px;text-align:right">
+                <input class="mat-input pricing-slab-qty" data-mid="${mid}" type="text" inputmode="numeric" value="${slabQty}" style="width:60px;text-align:right">
             </div>
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
                 <span style="font-size:10px;color:#999;min-width:50px">$/slab</span>
-                <input class="mat-input pricing-slab-price" data-mid="${mid}" type="number" min="0" step="0.01" value="${pricePerSlab}" style="width:80px;text-align:right" ${hasDbPrice && !useCustom ? 'placeholder="DB: '+dbCostPerSlab.toFixed(2)+'"' : ''}>
+                <input class="mat-input pricing-slab-price" data-mid="${mid}" type="text" inputmode="decimal" value="${pricePerSlab}" style="width:80px;text-align:right" ${hasDbPrice && !useCustom ? 'placeholder="DB: '+dbCostPerSlab.toFixed(2)+'"' : ''}>
                 ${!hasDbPrice ? '<span style="font-size:8px;color:#e05c5c">no DB price</span>' : ''}
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;padding:2px 0;border-top:1px dashed #333">
@@ -5509,7 +5509,7 @@ function renderPricingPanel() {
         </div>
         <div id="pricing-ps-fields" style="display:${psEnabled ? 'flex' : 'none'};gap:6px;align-items:center;padding:4px 0">
             <span style="font-size:10px;color:#999">Qty:</span>
-            <input class="mat-input" id="pricing-ps-qty" type="number" min="1" step="1" value="${psQty || 1}" style="width:50px;text-align:right">
+            <input class="mat-input" id="pricing-ps-qty" type="text" inputmode="numeric" value="${psQty || 1}" style="width:50px;text-align:right">
             <span style="font-size:10px;color:#999">× ${fmt$(psRate)}</span>
             <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:auto">${psEnabled ? fmt$(psCost) : ''}</span>
         </div>
@@ -5665,19 +5665,26 @@ function renderPricingPanel() {
 
     // ── Wire up interactive inputs ───────────────────────────
     // Slab qty
-    summaryContainer.querySelectorAll('.pricing-slab-qty').forEach(inp => inp.addEventListener('input', e => {
-        const mid = e.target.dataset.mid;
-        if (!pricingData.slabOverrides[mid]) pricingData.slabOverrides[mid] = {};
-        pricingData.slabOverrides[mid].qty = parseInt(e.target.value) || 0;
-        savePricing(); renderPricingPanel();
-    }));
-    // Slab custom price
-    summaryContainer.querySelectorAll('.pricing-slab-price').forEach(inp => inp.addEventListener('input', e => {
-        const mid = e.target.dataset.mid;
-        if (!pricingData.slabOverrides[mid]) pricingData.slabOverrides[mid] = {};
-        pricingData.slabOverrides[mid].customPrice = parseFloat(e.target.value) || 0;
-        savePricing(); renderPricingPanel();
-    }));
+    // Slab qty — `change` fires on blur/Enter so typing stays focused
+    summaryContainer.querySelectorAll('.pricing-slab-qty').forEach(inp => {
+        inp.addEventListener('change', e => {
+            const mid = e.target.dataset.mid;
+            if (!pricingData.slabOverrides[mid]) pricingData.slabOverrides[mid] = {};
+            pricingData.slabOverrides[mid].qty = parseInt(e.target.value) || 0;
+            savePricing(); renderPricingPanel();
+        });
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+    });
+    // Slab custom price — same treatment
+    summaryContainer.querySelectorAll('.pricing-slab-price').forEach(inp => {
+        inp.addEventListener('change', e => {
+            const mid = e.target.dataset.mid;
+            if (!pricingData.slabOverrides[mid]) pricingData.slabOverrides[mid] = {};
+            pricingData.slabOverrides[mid].customPrice = parseFloat(e.target.value) || 0;
+            savePricing(); renderPricingPanel();
+        });
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+    });
     // Polissage sous toggle
     const psToggle = document.getElementById('pricing-ps-toggle');
     if (psToggle) psToggle.addEventListener('change', e => {
@@ -5690,10 +5697,13 @@ function renderPricingPanel() {
     });
     // Polissage sous qty
     const psQtyInp = document.getElementById('pricing-ps-qty');
-    if (psQtyInp) psQtyInp.addEventListener('input', e => {
-        pricingData.polissageSousQty = parseInt(e.target.value) || 0;
-        savePricing(); renderPricingPanel();
-    });
+    if (psQtyInp) {
+        psQtyInp.addEventListener('change', e => {
+            pricingData.polissageSousQty = parseInt(e.target.value) || 0;
+            savePricing(); renderPricingPanel();
+        });
+        psQtyInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); psQtyInp.blur(); } });
+    }
     // Measurements toggle
     const measToggle = document.getElementById('pricing-meas-toggle');
     if (measToggle) measToggle.addEventListener('change', e => {
