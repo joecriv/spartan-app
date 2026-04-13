@@ -5434,27 +5434,29 @@ function renderPricingPanel() {
         </div>
     </div>`;
 
-    // ── Installation (with minimum fee) ──────────────────────
-    const instItem = allServiceItems.find(i => i.key === 'installation');
+    // ── Installation ─────────────────────────────────────────
+    // Costs tab's "Installation min. fee" (pricingData.installationMin) is applied silently
+    // as a floor. The Pricing tab exposes a "Custom install price" field
+    // (pricingData.installationCustom) that, when set, OVERRIDES the computed value.
     const instRate = pricingData.rates.installation || 0;
-    const instSqft = instItem ? instItem.qty : 0;
+    const instSqft = (allServiceItems.find(i => i.key === 'installation')?.qty) || 0;
     const instRawCost = instSqft * instRate;
     const instMin = pricingData.installationMin || 0;
-    const instCost = instItem ? instItem.cost : Math.max(instRawCost, instMin);
-    const instMinApplied = instMin > 0 && instRawCost < instMin;
-    if (instRate > 0 || instMin > 0) serviceCostTotal += instCost;
+    const instCustom = (pricingData.installationCustom != null && pricingData.installationCustom !== '')
+        ? (parseFloat(pricingData.installationCustom) || 0) : null;
+    const instCost = instCustom != null && instCustom > 0 ? instCustom : Math.max(instRawCost, instMin);
+    if (instRate > 0 || instMin > 0 || (instCustom||0) > 0) serviceCostTotal += instCost;
 
     sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px">
         <div class="price-check-label">Installation</div>
         <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
             <span style="font-size:10px;color:#999;flex:1">${instSqft.toFixed(2)} sqft × ${fmt$(instRate)}</span>
-            <span style="font-size:10px;color:${instMinApplied?'#777':'#b09030'};${instMinApplied?'text-decoration:line-through':''}">${fmt$(instRawCost)}</span>
+            <span style="font-size:11px;font-weight:700;color:${instCustom != null && instCustom > 0 ? '#777' : '#b09030'};${instCustom != null && instCustom > 0 ? 'text-decoration:line-through' : ''}">${fmt$(Math.max(instRawCost, instMin))}</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
-            <span style="font-size:10px;color:#999">Min. fee</span>
-            <input class="mat-input" id="pricing-inst-min" type="number" min="0" step="1" value="${instMin}" style="width:70px;text-align:right">
-            <span style="font-size:9px;color:${instMinApplied?'#e0a050':'#555'};margin-left:6px">${instMinApplied ? 'min applied' : ''}</span>
-            <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:auto">${fmt$(instCost)}</span>
+            <span style="font-size:10px;color:#999;flex:1">Custom install price <span style="font-size:8.5px;color:#666">(leave blank to use calculated)</span></span>
+            <input class="mat-input" id="pricing-inst-custom" type="text" inputmode="decimal" value="${instCustom != null ? instCustom : ''}" placeholder="—" style="width:90px;text-align:right">
+            <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:6px">${fmt$(instCost)}</span>
         </div>
     </div>`;
 
@@ -5617,12 +5619,24 @@ function renderPricingPanel() {
         pricingData.measurementsEnabled = e.target.checked;
         savePricing(); renderPricingPanel();
     });
-    // Installation minimum fee
-    const instMinInp = document.getElementById('pricing-inst-min');
-    if (instMinInp) instMinInp.addEventListener('input', e => {
-        pricingData.installationMin = parseFloat(e.target.value) || 0;
-        savePricing(); renderPricingPanel();
-    });
+    // Custom install price — fires on blur/Enter (NOT input) so typing stays focused
+    const instCustInp = document.getElementById('pricing-inst-custom');
+    if (instCustInp) {
+        instCustInp.addEventListener('change', e => {
+            const raw = (e.target.value || '').toString().trim();
+            if (raw === '') {
+                delete pricingData.installationCustom;
+            } else {
+                const v = parseFloat(raw);
+                pricingData.installationCustom = isNaN(v) ? '' : v;
+            }
+            savePricing(); renderPricingPanel();
+        });
+        // Commit on Enter key too
+        instCustInp.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); instCustInp.blur(); }
+        });
+    }
 }
 
 // Re-render only the summary (not rate inputs) to avoid losing focus
@@ -7231,15 +7245,20 @@ function calcProjectFees() {
     const installRate = pricingData.rates.installation || 0;
     const installMin  = pricingData.installationMin   || 0;
     const installRaw  = totalSqft * installRate;
-    const installCost = Math.max(installRaw, installMin);
-    const installMinApplied = installMin > 0 && installRaw < installMin;
+    // "Custom install price" in Pricing tab wins when set (any positive value)
+    const instCustomRaw = pricingData.installationCustom;
+    const installCustom = (instCustomRaw != null && instCustomRaw !== '')
+        ? (parseFloat(instCustomRaw) || 0) : 0;
+    const installCost = installCustom > 0 ? installCustom : Math.max(installRaw, installMin);
+    const installMinApplied = installCustom <= 0 && installMin > 0 && installRaw < installMin;
+    const installCustomUsed = installCustom > 0;
     const measEnabled = pricingData.measurementsEnabled !== false;
     const measCost    = measEnabled ? (pricingData.rates.measurements || 0) : 0;
     const polQty      = pricingData.polissageSousQty || 0;
     const polCost     = polQty * (pricingData.rates.polissageSous || 0);
     return {
         totalSqft,
-        installRate, installMin, installRaw, installCost, installMinApplied,
+        installRate, installMin, installRaw, installCost, installMinApplied, installCustomUsed, installCustom,
         measEnabled, measCost,
         polQty, polCost,
         total: installCost + measCost + polCost
@@ -7771,7 +7790,9 @@ function generateProposal() {
             doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
             if (fees.installCost > 0) {
                 checkY(13);
-                const lbl = fees.installMinApplied
+                const lbl = fees.installCustomUsed
+                    ? `Installation (custom price)`
+                    : fees.installMinApplied
                     ? `Installation (${fees.totalSqft.toFixed(1)} sqft — minimum applied)`
                     : `Installation (${fees.totalSqft.toFixed(1)} sqft × ${fmt$(fees.installRate)})`;
                 doc.text(lbl, ML + 6, y);
