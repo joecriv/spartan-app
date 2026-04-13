@@ -6967,23 +6967,19 @@ document.addEventListener('keydown', e => {
 });
 
 function calcPageSqft(page) {
+    // Gross countertop sqft — matches the pricing tab's billable calculation.
+    // Cutouts (sinks, cooktops, outlets, bocci) are NOT subtracted: you still pay
+    // for the slab area around them. Farmhouse sinks remain subtracted because they
+    // live at the edge of the slab and are handled as a property on the main shape.
     let total = 0;
     for (const s of page.shapes) {
-        if (s.subtype === 'sink_overmount' || s.subtype === 'sink_undermount' || s.subtype === 'sink_vasque' || s.subtype === 'cooktop') {
-            // Subtract cutout area from slab
-            total -= s.w * s.h;
-        } else if (s.subtype === 'outlet') {
-            total -= s.w * s.h;
-        } else if (s.subtype === 'bocci') {
-            total -= Math.PI * (s.w / 2) * (s.w / 2);
-        } else {
-            let area = s.w * s.h;
-            if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
-            if (s.shapeType === 'u') area = uShapeAreaPx(s);
-            if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
-                if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
-            total += area;
-        }
+        if (s.subtype) continue;  // skip sink/cooktop/outlet/bocci cutout shapes
+        let area = s.w * s.h;
+        if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
+        if (s.shapeType === 'u') area = uShapeAreaPx(s);
+        if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
+        if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+        total += area;
     }
     return Math.max(0, total) / SQFT_PX2;
 }
