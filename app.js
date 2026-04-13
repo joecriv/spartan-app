@@ -4289,6 +4289,7 @@ function loadForm() {
     } catch(e) {}
     if (!formData.phones) formData.phones = [''];
     if (!formData.address) formData.address = '';
+    migrateMaterialTypes();
     document.getElementById('f-order').value   = formData.order   || '';
     document.getElementById('f-job').value     = formData.job     || '';
     document.getElementById('f-client').value  = formData.client  || '';
@@ -4332,21 +4333,29 @@ function matHtml(m) {
     const slabStr = linked ? `${linked.slabW||'?'}" × ${linked.slabH||'?'}"` : '';
     const costStr = linked ? `Cost/slab: ${linked.costPerSlab ? fmt$(linked.costPerSlab) : 'not set'}` : '';
 
-    const selType = m.type || 'zone';
-    const labelPlaceholder = selType === 'option' ? `Option ${getOptionLetter(m)} (editable)`
-                            : selType === 'page'  ? 'Page name (e.g. Kitchen, Bathroom)'
-                            : 'Zone name (e.g. Island, Perimeter)';
+    const selType = (m.type === 'option' || m.type === 'page') ? m.type : 'page';
+    const optionPlaceholder = `Option ${getOptionLetter(m)} (editable)`;
+    // Build the Label control: page selector for Page type, editable text for Option
+    let labelControl;
+    if (selType === 'page') {
+        labelControl = `<select class="mat-input mat-page-sel" data-mid="${m.id}" style="width:100%">
+            <option value="">— Select page —</option>
+            ${pages.map(p => `<option value="${p.id}" ${m.pageId === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+        </select>`;
+    } else {
+        labelControl = `<input class="mat-input mat-label-inp" data-mid="${m.id}" type="text" style="width:100%" value="${(m.label||'').replace(/"/g,'&quot;')}" placeholder="${optionPlaceholder}">`;
+    }
+    const labelHdr = selType === 'page' ? 'Page (canvas tab)' : 'Label';
     return `<div class="mat-row" id="mat-${m.id}">
         <button class="mat-remove" onclick="removeMaterial(${m.id})" title="Remove">×</button>
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
             <div style="flex:1;min-width:80px"><span class="mat-lbl">Type</span>
                 <select class="mat-input mat-type-sel" data-mid="${m.id}" style="width:100%">
-                    <option value="zone"   ${selType==='zone'  ?'selected':''}>Zone</option>
-                    <option value="option" ${selType==='option'?'selected':''}>Option</option>
                     <option value="page"   ${selType==='page'  ?'selected':''}>Page</option>
+                    <option value="option" ${selType==='option'?'selected':''}>Option</option>
                 </select></div>
-            <div style="flex:2;min-width:120px"><span class="mat-lbl">Label</span>
-                <input class="mat-input mat-label-inp" data-mid="${m.id}" type="text" style="width:100%" value="${(m.label||'').replace(/"/g,'&quot;')}" placeholder="${labelPlaceholder}">
+            <div style="flex:2;min-width:120px"><span class="mat-lbl">${labelHdr}</span>
+                ${labelControl}
             </div>
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -4386,16 +4395,34 @@ function renderMaterials() {
         const m = formData.materials.find(m => m.id === +e.target.dataset.mid);
         if (!m) return;
         m.type = e.target.value;
-        // Auto-assign Option label ONLY if it's empty or a prior auto-Option placeholder;
-        // preserve any custom name the user has typed.
         if (m.type === 'option') {
+            // Switching to Option — set default label if empty or a page name
+            m.pageId = null;
             if (!m.label || /^Option [A-Z]$/.test(m.label)) m.label = `Option ${getOptionLetter(m)}`;
-        } else if (/^Option [A-Z]$/.test(m.label||'')) {
-            m.label = '';
+        } else if (m.type === 'page') {
+            // Switching to Page — auto-link to current page if no link exists
+            if (m.pageId == null) {
+                const curPage = pages[currentPageIdx] || pages[0];
+                m.pageId = curPage ? curPage.id : null;
+                m.label = curPage ? curPage.name : '';
+            } else {
+                const p = pages.find(pg => pg.id === m.pageId);
+                if (p) m.label = p.name;
+            }
         }
         saveForm(); renderMaterials(); renderPricingPanel();
     }));
-    // Label input — editable for all types (Options auto-default but are fully overridable)
+    // Page selector (for type=page)
+    document.querySelectorAll('.mat-page-sel').forEach(sel => sel.addEventListener('change', e => {
+        const m = formData.materials.find(m => m.id === +e.target.dataset.mid);
+        if (!m) return;
+        const pid = +e.target.value;
+        m.pageId = pid || null;
+        const p = pages.find(pg => pg.id === pid);
+        m.label = p ? p.name : '';
+        saveForm(); renderPricingPanel();
+    }));
+    // Label input — for Option type (editable free text)
     document.querySelectorAll('.mat-label-inp').forEach(inp => inp.addEventListener('input', e => {
         const m = formData.materials.find(m => m.id === +e.target.dataset.mid);
         if (!m) return;
@@ -4423,7 +4450,15 @@ function renderMaterials() {
 }
 
 function addMaterial() {
-    const m = { id: matNextId++, color:'', supplier:'', thickness:'3cm', finish:'Polished', type:'zone', label:'' };
+    // Default new materials to 'page' type, auto-linked to the current canvas page
+    const curPage = (pages && pages[currentPageIdx]) || (pages && pages[0]);
+    const m = {
+        id: matNextId++,
+        color:'', supplier:'', thickness:'3cm', finish:'Polished',
+        type: 'page',
+        pageId: curPage ? curPage.id : null,
+        label: curPage ? curPage.name : ''
+    };
     formData.materials.push(m);
     saveForm(); renderMaterials();
     // Focus first input of the new row
@@ -4434,16 +4469,53 @@ function addMaterial() {
 // Helper: auto-assign Option letters (A, B, C…) based on ordinal position among Options
 function getOptionLetter(mat) {
     const mats = formData.materials || [];
-    const options = mats.filter(mm => (mm.type||'zone') === 'option');
+    const options = mats.filter(mm => (mm.type||'page') === 'option');
     const idx = options.findIndex(mm => mm.id === mat.id);
     return idx >= 0 ? String.fromCharCode(65 + idx) : '?';
 }
+// Resolve a Page-type material's linked page (by pageId, falling back to label==name)
+function getLinkedPage(mat) {
+    if (!mat) return null;
+    if (mat.pageId != null) {
+        const p = pages.find(pg => pg.id === mat.pageId);
+        if (p) return p;
+    }
+    if (mat.label) {
+        const p = pages.find(pg => pg.name === mat.label);
+        if (p) return p;
+    }
+    return null;
+}
 function defaultLabelForType(mat) {
-    const t = mat.type || 'zone';
+    const t = mat.type || 'page';
     if (t === 'option') return `Option ${getOptionLetter(mat)}`;
-    if (t === 'zone')   return 'Zone';
-    if (t === 'page')   return 'Page';
+    if (t === 'page')   {
+        const p = getLinkedPage(mat);
+        return p ? p.name : 'Page';
+    }
     return '';
+}
+
+// Migrate legacy materials: 'zone' type → 'page' type, auto-link to first page
+function migrateMaterialTypes() {
+    if (!formData.materials || !pages || !pages.length) return;
+    let changed = false;
+    for (const m of formData.materials) {
+        const t = m.type || '';
+        if (t === '' || t === 'zone') {
+            m.type = 'page';
+            if (m.pageId == null) m.pageId = pages[0].id;
+            m.label = (pages.find(p => p.id === m.pageId) || pages[0]).name;
+            changed = true;
+        } else if (t === 'page' && m.pageId == null) {
+            // Page-type with no pageId — try to resolve via label, else default to first page
+            const byName = pages.find(p => p.name === m.label);
+            m.pageId = byName ? byName.id : pages[0].id;
+            if (!byName) m.label = pages[0].name;
+            changed = true;
+        }
+    }
+    if (changed) saveForm();
 }
 
 function removeMaterial(id) {
@@ -5086,8 +5158,11 @@ function renderPricingPanel() {
     // ── Material costs (slab-based) ──────────────────────────
     let materialCostTotal = 0;
     let matLines = '';
-    const matSqftMap = {};
+    // Compute sqft per page (by page.id)
+    const pageSqftById = {};
+    let totalProjectSqft = 0;
     for (const page of pages) {
+        let pageSqft = 0;
         for (const s of page.shapes) {
             if (s.subtype) continue;
             let area = s.w * s.h;
@@ -5095,16 +5170,22 @@ function renderPricingPanel() {
             if (s.shapeType === 'u') area = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area = Math.PI * (s.w/2) * (s.h/2);
             if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
-            const mid = s.materialId || (formData.materials[0] && formData.materials[0].id) || 0;
-            matSqftMap[mid] = (matSqftMap[mid] || 0) + area / SQFT_PX2;
+            pageSqft += area / SQFT_PX2;
         }
+        pageSqftById[page.id] = pageSqft;
+        totalProjectSqft += pageSqft;
     }
-    // Total project sqft across all shapes (used for Option scenarios)
-    let totalProjectSqft = 0;
-    for (const v of Object.values(matSqftMap)) totalProjectSqft += v;
-    // Options ALWAYS cover the whole project — overwrite their per-shape sqft
+
+    // Build matSqftMap by material type:
+    //   - Page-type material: sqft = sqft of its linked page
+    //   - Option-type material: sqft = whole-project total (alternative scenarios)
+    const matSqftMap = {};
     for (const mat of (formData.materials||[])) {
-        if ((mat.type||'zone') === 'option') {
+        const t = mat.type || 'page';
+        if (t === 'page') {
+            const ps = (mat.pageId != null) ? (pageSqftById[mat.pageId] || 0) : 0;
+            matSqftMap[mat.id] = ps;
+        } else if (t === 'option') {
             matSqftMap[mat.id] = totalProjectSqft;
         }
     }
@@ -5151,40 +5232,35 @@ function renderPricingPanel() {
         return { mat, html, matSubtotal };
     }
 
-    // Group materials by type
-    const pagesGrp = [], zonesGrp = [], optionsGrp = [];
+    // Group materials by type (Page or Option — Zones have been removed)
+    const pagesGrp = [], optionsGrp = [];
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const b = buildMatBlock(mid, msqft);
-        const t = (b.mat.type || 'zone');
-        if (t === 'page')        pagesGrp.push({ mid, ...b });
-        else if (t === 'option') optionsGrp.push({ mid, ...b });
-        else                     zonesGrp.push({ mid, ...b });
+        const t = (b.mat.type || 'page');
+        if (t === 'option') optionsGrp.push({ mid, ...b });
+        else                pagesGrp.push({ mid, ...b });  // default: page
     }
 
-    // ── Pages: each gets its own subtotal section ────────────
-    for (const b of pagesGrp) {
-        materialCostTotal += b.matSubtotal;
-        const name = b.mat.label || 'Page';
-        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px solid #b09030;border-radius:6px;padding:8px;background:#1f1f1f">
-            <div class="price-check-label" style="color:#b09030">PAGE — ${name}</div>
-            ${b.html}
-            <div style="text-align:right;margin-top:6px;font-size:12px;font-weight:700;color:#b09030">Page subtotal: ${fmt$(b.matSubtotal)}</div>
+    // Warn about canvas pages that have shapes but no linked Page-type material
+    const linkedPageIds = new Set(pagesGrp.map(b => b.mat.pageId).filter(Boolean));
+    const orphanPages = pages.filter(p => (pageSqftById[p.id] || 0) > 0 && !linkedPageIds.has(p.id));
+    if (orphanPages.length > 0) {
+        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px dashed #e0a050;border-radius:6px;padding:8px;background:#1f1b10">
+            <div style="color:#e0a050;font-size:11px;font-weight:700;margin-bottom:3px">⚠ Page(s) without a linked material</div>
+            <div style="color:#aaa;font-size:10px">These canvas pages have shapes but no Page-type material assigned: ${orphanPages.map(p=>p.name).join(', ')}. Add a material of type "Page" and link it to each page to include them in pricing.</div>
         </div>`;
     }
 
-    // ── Zones: combined section ──────────────────────────────
-    if (zonesGrp.length > 0) {
-        let zoneTotal = 0, zoneInner = '';
-        for (const b of zonesGrp) {
-            zoneTotal += b.matSubtotal;
-            const zoneLbl = (b.mat.label||'').trim();
-            zoneInner += (zoneLbl ? `<div style="font-size:10px;color:#b09030;margin:4px 0 2px;padding-left:2px">Zone: ${zoneLbl}</div>` : '') + b.html;
-        }
-        materialCostTotal += zoneTotal;
-        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px">
-            <div class="price-check-label">${zonesGrp.length > 1 ? 'Zones' : 'Material'}</div>
-            ${zoneInner}
-            ${zonesGrp.length > 1 ? `<div style="text-align:right;margin-top:4px;font-size:12px;font-weight:700;color:#b09030">Zones total: ${fmt$(zoneTotal)}</div>` : ''}
+    // ── Pages: each Page-material gets its own subtotal section ────
+    for (const b of pagesGrp) {
+        materialCostTotal += b.matSubtotal;
+        const linkedPage = pages.find(p => p.id === b.mat.pageId);
+        const name = linkedPage ? linkedPage.name : (b.mat.label || 'Unassigned');
+        const unassignedNote = linkedPage ? '' : ' <span style="font-size:9px;color:#e0a050">(not linked to any page)</span>';
+        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px solid #b09030;border-radius:6px;padding:8px;background:#1f1f1f">
+            <div class="price-check-label" style="color:#b09030">PAGE — ${name}${unassignedNote}</div>
+            ${b.html}
+            <div style="text-align:right;margin-top:6px;font-size:12px;font-weight:700;color:#b09030">Page subtotal: ${fmt$(b.matSubtotal)}</div>
         </div>`;
     }
 
@@ -5270,7 +5346,7 @@ function renderPricingPanel() {
         </div>
     </div>`;
 
-    // ── Grand total of committed costs (pages + zones + services) ──
+    // ── Grand total of committed costs (pages + services) ──
     const committedTotal = materialCostTotal + serviceCostTotal;
     const committedLabel = optionsGrp.length > 0 ? 'Committed subtotal (shared)' : 'Grand Total';
     sumHtml += `<div class="room-pricing-section" style="margin-top:8px;padding:8px;background:#2d3a10;border:1px solid #b09030;border-radius:6px">
@@ -6806,45 +6882,33 @@ function calcRoomPricing(page) {
     const TAX      = 1.14975; // 1 + GST(5%) + QST(9.975%)
     const roomSqft = calcPageSqft(page);
 
-    const matSqftMap = {};
-    for (const s of page.shapes) {
-        if (s.subtype) continue;
-        let area = s.w * s.h;
-        if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
-        if (s.shapeType === 'u') area = uShapeAreaPx(s);
-        if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
-                if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
-        const mid = s.materialId || (formData.materials[0] && formData.materials[0].id) || 0;
-        matSqftMap[mid] = (matSqftMap[mid] || 0) + area / SQFT_PX2;
-    }
+    // Find the Page-type material linked to THIS canvas page (by pageId)
+    const pageMat = (formData.materials||[]).find(m =>
+        (m.type||'page') === 'page' && m.pageId === page.id
+    );
 
     const matEntries = [];
     let materialCostTotal = 0;
-    for (const [mid, msqft] of Object.entries(matSqftMap)) {
-        const mat = formData.materials.find(m => m.id === +mid) || {};
-        const mtype = mat.type || 'zone';
-        // Skip Options — they are rendered in the final project summary, not per-page
-        if (mtype === 'option') continue;
-        const mlabel = mat.label || '';
-        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
-                         (mat.color||'').toLowerCase().includes('dekton') ||
-                         (mat.thickness||'').toLowerCase().includes('dekton') ||
-                         (mat.notes||'').toLowerCase().includes('dekton');
-        const pps = getMatPriceSqft(+mid);
-        const matCost = msqft * pps;
+    if (pageMat && roomSqft > 0) {
+        const isDekton = (pageMat.supplier||'').toLowerCase().includes('dekton') ||
+                         (pageMat.color||'').toLowerCase().includes('dekton') ||
+                         (pageMat.thickness||'').toLowerCase().includes('dekton') ||
+                         (pageMat.notes||'').toLowerCase().includes('dekton');
+        const pps = getMatPriceSqft(pageMat.id);
+        const matCost = roomSqft * pps;
         const cuttingRate = isDekton ? (pricingData.rates.dektonCoupe || 0) : (pricingData.rates.coupe || 0);
-        const cuttingCost = msqft * cuttingRate;
+        const cuttingCost = roomSqft * cuttingRate;
         const entryPreT = matCost + cuttingCost;
-        materialCostTotal += entryPreT;
+        materialCostTotal = entryPreT;
         matEntries.push({
-            color:     mat.color     || '',
-            supplier:  mat.supplier  || '',
-            thickness: mat.thickness || '',
-            finish:    mat.finish    || '',
+            color:     pageMat.color     || '',
+            supplier:  pageMat.supplier  || '',
+            thickness: pageMat.thickness || '',
+            finish:    pageMat.finish    || '',
             preT:      entryPreT,
             isDekton,
-            mtype,
-            mlabel
+            mtype:     'page',
+            mlabel:    page.name
         });
     }
 
@@ -6852,7 +6916,7 @@ function calcRoomPricing(page) {
     const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
     const totalAddons = serviceItems.reduce((s, i) => s + i.cost, 0);
 
-    // Blend addons proportionally into page/zone entries
+    // Blend addons proportionally (only one entry here, but keep logic for fallback)
     for (const m of matEntries) {
         const share = materialCostTotal > 0
             ? (m.preT / materialCostTotal) * totalAddons
@@ -6860,12 +6924,12 @@ function calcRoomPricing(page) {
         m.blendedPreT = m.preT + share;
         m.total = m.blendedPreT * TAX;
     }
-    // If no materials but there are addons, create a single entry
+    // If the page has no linked material but still has services, create a single entry
     if (matEntries.length === 0 && totalAddons > 0) {
         matEntries.push({
             color:'Services', supplier:'', thickness:'', finish:'',
             preT: 0, blendedPreT: totalAddons, total: totalAddons * TAX,
-            mtype: 'zone', mlabel: ''
+            mtype: 'page', mlabel: page.name
         });
     }
 
@@ -6894,31 +6958,24 @@ function calcOptionsSummary() {
     const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
     const sharedServices = serviceItems.reduce((s, i) => s + i.cost, 0);
 
-    // Shared committed material cost (zone/page materials — these apply to every Option scenario)
+    // Shared committed material cost — Page-type materials are added to every Option scenario
     let sharedCommittedMat = 0;
-    const committedMatsSqft = {};
+    // Page-type materials are "fixed" baselines added to each Option scenario:
+    // each linked page contributes (page sqft × $/sqft) + cutting to the shared baseline.
     for (const page of pages) {
-        for (const s of page.shapes) {
-            if (s.subtype) continue;
-            const mat = formData.materials.find(mm => mm.id === s.materialId);
-            if (!mat || (mat.type||'zone') === 'option') continue;
-            let area = s.w * s.h;
-            if (s.shapeType === 'l')      area -= (s.notchW||0) * (s.notchH||0);
-            if (s.shapeType === 'u')      area  = uShapeAreaPx(s);
-            if (s.shapeType === 'circle') area  = Math.PI * (s.w/2) * (s.h/2);
-            if (s.farmSink)               area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
-            committedMatsSqft[mat.id] = (committedMatsSqft[mat.id]||0) + area / SQFT_PX2;
-        }
-    }
-    for (const [mid, msqft] of Object.entries(committedMatsSqft)) {
-        const mat = formData.materials.find(mm => mm.id === +mid) || {};
-        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
-                         (mat.color||'').toLowerCase().includes('dekton') ||
-                         (mat.thickness||'').toLowerCase().includes('dekton');
-        const pps = getMatPriceSqft(+mid);
-        const matCost = msqft * pps;
+        const pageMat = (formData.materials||[]).find(mm =>
+            (mm.type||'page') === 'page' && mm.pageId === page.id
+        );
+        if (!pageMat) continue;
+        const pSqft = calcPageSqft(page);
+        if (pSqft <= 0) continue;
+        const isDekton = (pageMat.supplier||'').toLowerCase().includes('dekton') ||
+                         (pageMat.color||'').toLowerCase().includes('dekton') ||
+                         (pageMat.thickness||'').toLowerCase().includes('dekton');
+        const pps = getMatPriceSqft(pageMat.id);
+        const matCost = pSqft * pps;
         const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
-        sharedCommittedMat += matCost + msqft * cutRate;
+        sharedCommittedMat += matCost + pSqft * cutRate;
     }
 
     const sharedBaseline = sharedServices + sharedCommittedMat;
@@ -6926,7 +6983,7 @@ function calcOptionsSummary() {
     // Per-option breakdowns
     const options = [];
     for (const mat of (formData.materials||[])) {
-        if ((mat.type||'zone') !== 'option') continue;
+        if ((mat.type||'page') !== 'option') continue;
         const label = mat.label || `Option ${getOptionLetter(mat)}`;
         const isDekton = (mat.supplier||'').toLowerCase().includes('dekton') ||
                          (mat.color||'').toLowerCase().includes('dekton') ||
@@ -7620,10 +7677,10 @@ function exportPDF() {
         doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
         for (const m of formData.materials) {
             checkY(13);
-            const t = m.type || 'zone';
-            const tLabel = t === 'option' ? (m.label || `Option ${getOptionLetter(m)}`)
-                         : t === 'page'   ? `Page: ${m.label||'—'}`
-                         : (m.label ? `Zone: ${m.label}` : 'Zone');
+            const t = m.type || 'page';
+            const tLabel = t === 'option'
+                ? (m.label || `Option ${getOptionLetter(m)}`)
+                : `Page: ${m.label||'—'}`;
             [tLabel, m.color||'—', m.supplier||'—', m.thickness||'—', m.finish||'—'].forEach((v, i) => doc.text(v, mc[i], y));
             y += 13;
         }
@@ -8058,7 +8115,17 @@ function renderPageTabs() {
             const newName = nameEl.textContent.trim() || p.name;
             nameEl.textContent = newName;
             p.name = newName;
+            // Update any Page-type material labels linked to this page
+            let matsChanged = false;
+            for (const m of (formData.materials||[])) {
+                if ((m.type||'page') === 'page' && m.pageId === p.id) {
+                    m.label = newName; matsChanged = true;
+                }
+            }
+            if (matsChanged) saveForm();
             persist();
+            renderMaterials();
+            renderPricingPanel();
         });
         nameEl.addEventListener('keydown', e => {
             if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
@@ -8112,18 +8179,30 @@ function addPage() {
     syncPageIn();
     persist();
     renderPageTabs();
+    renderMaterials(); // refresh page-selector dropdowns in material rows
     render(); updateStatus();
 }
 
 function deletePage(idx) {
     if (pages.length <= 1) return;
     if (!confirm(`Delete "${pages[idx].name}"? This cannot be undone.`)) return;
+    const deletedId = pages[idx].id;
     pages.splice(idx, 1);
     if (currentPageIdx >= pages.length) currentPageIdx = pages.length - 1;
     syncPageIn();
     selected = null; selectedJoint = null; selectedText = null;
+    // Unlink any Page-type materials pointing to the deleted page
+    let matsChanged = false;
+    for (const m of (formData.materials||[])) {
+        if ((m.type||'page') === 'page' && m.pageId === deletedId) {
+            m.pageId = null; m.label = ''; matsChanged = true;
+        }
+    }
+    if (matsChanged) saveForm();
     persist();
     renderPageTabs();
+    renderMaterials();
+    renderPricingPanel();
     render(); updateStatus();
 }
 
