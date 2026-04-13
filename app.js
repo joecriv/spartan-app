@@ -4325,7 +4325,7 @@ function matHtml(m) {
     const costStr = linked ? `Cost/slab: ${linked.costPerSlab ? fmt$(linked.costPerSlab) : 'not set'}` : '';
 
     const selType = m.type || 'zone';
-    const labelPlaceholder = selType === 'option' ? `auto: Option ${getOptionLetter(m)}`
+    const labelPlaceholder = selType === 'option' ? `Option ${getOptionLetter(m)} (editable)`
                             : selType === 'page'  ? 'Page name (e.g. Kitchen, Bathroom)'
                             : 'Zone name (e.g. Island, Perimeter)';
     return `<div class="mat-row" id="mat-${m.id}">
@@ -4338,7 +4338,7 @@ function matHtml(m) {
                     <option value="page"   ${selType==='page'  ?'selected':''}>Page</option>
                 </select></div>
             <div style="flex:2;min-width:120px"><span class="mat-lbl">Label</span>
-                <input class="mat-input mat-label-inp" data-mid="${m.id}" type="text" style="width:100%" value="${(m.label||'').replace(/"/g,'&quot;')}" placeholder="${labelPlaceholder}" ${selType==='option'?'readonly':''}>
+                <input class="mat-input mat-label-inp" data-mid="${m.id}" type="text" style="width:100%" value="${(m.label||'').replace(/"/g,'&quot;')}" placeholder="${labelPlaceholder}">
             </div>
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -4377,15 +4377,19 @@ function renderMaterials() {
         const m = formData.materials.find(m => m.id === +e.target.dataset.mid);
         if (!m) return;
         m.type = e.target.value;
-        // Auto-assign Option label; clear zone/page labels that equal a prior auto-Option label
-        if (m.type === 'option') m.label = `Option ${getOptionLetter(m)}`;
-        else if (/^Option [A-Z]$/.test(m.label||'')) m.label = '';
+        // Auto-assign Option label ONLY if it's empty or a prior auto-Option placeholder;
+        // preserve any custom name the user has typed.
+        if (m.type === 'option') {
+            if (!m.label || /^Option [A-Z]$/.test(m.label)) m.label = `Option ${getOptionLetter(m)}`;
+        } else if (/^Option [A-Z]$/.test(m.label||'')) {
+            m.label = '';
+        }
         saveForm(); renderMaterials(); renderPricingPanel();
     }));
-    // Label input (zone/page only; option is read-only auto)
+    // Label input — editable for all types (Options auto-default but are fully overridable)
     document.querySelectorAll('.mat-label-inp').forEach(inp => inp.addEventListener('input', e => {
         const m = formData.materials.find(m => m.id === +e.target.dataset.mid);
-        if (!m || (m.type||'zone') === 'option') return;
+        if (!m) return;
         m.label = e.target.value;
         saveForm(); renderPricingPanel();
     }));
