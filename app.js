@@ -7090,14 +7090,21 @@ function calcPagePricing(page) {
         (m.type||'page') === 'page' && m.pageId === page.id
     );
 
-    // Material + cutting (per-material cutting rate, Dekton vs regular)
+    // Material + cutting — slab-based (matches pricing tab; respects user slab overrides)
     let matCost = 0, cutCost = 0, cutRate = 0;
     let isDekton = false;
     if (pageMat && roomSqft > 0) {
         isDekton = (pageMat.supplier||'').toLowerCase().includes('dekton')
                 || (pageMat.color   ||'').toLowerCase().includes('dekton')
                 || (pageMat.thickness||'').toLowerCase().includes('dekton');
-        matCost = roomSqft * getMatPriceSqft(pageMat.id);
+        const dbCostPerSlab = getMatCostPerSlab(pageMat.id);
+        const slabSqft = getMatSlabSqft(pageMat.id);
+        const suggestedQty = slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1;
+        const ov = (pricingData.slabOverrides||{})[pageMat.id] || {};
+        const slabQty = ov.qty != null ? ov.qty : suggestedQty;
+        const useCustom = ov.customPrice != null && ov.customPrice >= 0;
+        const pricePerSlab = useCustom ? ov.customPrice : dbCostPerSlab;
+        matCost = slabQty * pricePerSlab;
         cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
         cutCost = roomSqft * cutRate;
     }
@@ -7163,16 +7170,27 @@ function calcPageOptions(page) {
                        + evierOverCost + evierUnderCost + evierVasqueCost
                        + cooktopCost + farmSinkCost;
 
-    // Per-option (material + cutting); services are added to each option's subtotal
+    // Per-option (material + cutting); services are added to each option's subtotal.
+    // Material cost uses the SAME slab-based calculation as the pricing tab (respects
+    // user overrides for slab qty + price per slab via pricingData.slabOverrides).
     const options = mats.map(mat => {
         const isDekton = (mat.supplier||'').toLowerCase().includes('dekton')
                       || (mat.color   ||'').toLowerCase().includes('dekton')
                       || (mat.thickness||'').toLowerCase().includes('dekton');
-        const matCost = roomSqft * getMatPriceSqft(mat.id);
+        // Slab-based material cost (matches buildMatBlock in renderPricingPanel)
+        const dbCostPerSlab = getMatCostPerSlab(mat.id);
+        const slabSqft = getMatSlabSqft(mat.id);
+        const suggestedQty = slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1;
+        const ov = (pricingData.slabOverrides||{})[mat.id] || {};
+        const slabQty = ov.qty != null ? ov.qty : suggestedQty;
+        const useCustom = ov.customPrice != null && ov.customPrice >= 0;
+        const pricePerSlab = useCustom ? ov.customPrice : dbCostPerSlab;
+        const matCost = slabQty * pricePerSlab;
+        // Cutting (same formula across both views)
         const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
         const cutCost = roomSqft * cutRate;
         const optionSubtotal = matCost + cutCost + servicesCost;
-        return { material: mat, isDekton, matCost, cutCost, cutRate, optionSubtotal };
+        return { material: mat, isDekton, slabQty, pricePerSlab, matCost, cutCost, cutRate, optionSubtotal };
     });
 
     return {
@@ -7312,10 +7330,9 @@ function calcOptionsSummary() {
     const serviceItems = getServiceLineItems().filter(i => i.key !== 'coupe' && i.key !== 'dektonCoupe');
     const sharedServices = serviceItems.reduce((s, i) => s + i.cost, 0);
 
-    // Shared committed material cost — Page-type materials are added to every Option scenario
+    // Shared committed material cost — Page-type materials added to every whole-project Option scenario.
+    // Uses the SAME slab-based math as the pricing tab (respects user slab qty/price overrides).
     let sharedCommittedMat = 0;
-    // Page-type materials are "fixed" baselines added to each Option scenario:
-    // each linked page contributes (page sqft × $/sqft) + cutting to the shared baseline.
     for (const page of pages) {
         const pageMat = (formData.materials||[]).find(mm =>
             (mm.type||'page') === 'page' && mm.pageId === page.id
@@ -7326,8 +7343,14 @@ function calcOptionsSummary() {
         const isDekton = (pageMat.supplier||'').toLowerCase().includes('dekton') ||
                          (pageMat.color||'').toLowerCase().includes('dekton') ||
                          (pageMat.thickness||'').toLowerCase().includes('dekton');
-        const pps = getMatPriceSqft(pageMat.id);
-        const matCost = pSqft * pps;
+        const dbCostPerSlab = getMatCostPerSlab(pageMat.id);
+        const slabSqft = getMatSlabSqft(pageMat.id);
+        const suggestedQty = slabSqft > 0 ? Math.ceil(pSqft / slabSqft) : 1;
+        const ov = (pricingData.slabOverrides||{})[pageMat.id] || {};
+        const slabQty = ov.qty != null ? ov.qty : suggestedQty;
+        const useCustom = ov.customPrice != null && ov.customPrice >= 0;
+        const pricePerSlab = useCustom ? ov.customPrice : dbCostPerSlab;
+        const matCost = slabQty * pricePerSlab;
         const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
         sharedCommittedMat += matCost + pSqft * cutRate;
     }
