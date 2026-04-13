@@ -7019,36 +7019,69 @@ function generateProposal() {
     doc.text(`Valid until: ${validUntil}`, PW-MR, 65, {align:'right'});
     addPageFooter();
 
-    // Bill To banner
-    doc.setFillColor(...TBL_BG); doc.rect(ML, y, CW, 46, 'F');
-    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.rect(ML, y, CW, 46, 'S');
+    // Bill To banner — full client info (client + job + address + phones)
+    const phones = (formData.phones || []).filter(Boolean);
+    const addrLines = formData.address ? doc.splitTextToSize(formData.address, CW/2 - 14) : [];
+    const leftLines = 1 /*client*/ + (formData.job ? 1 : 0) + addrLines.length;
+    const rightLines = phones.length;
+    const bodyLines = Math.max(leftLines, rightLines);
+    const billH = 20 /*header band*/ + bodyLines * 12 + 10 /*padding*/;
+
+    doc.setFillColor(...TBL_BG); doc.rect(ML, y, CW, billH, 'F');
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.rect(ML, y, CW, billH, 'S');
+    // Vertical divider between left (Bill To) and right (Phone) columns
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.3);
+    doc.line(ML + CW/2, y + 4, ML + CW/2, y + billH - 4);
+
+    // Left column — FACTURÉ À
     doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...BRAND);
     doc.text('FACTURÉ À', ML+6, y+11);
     doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(120,100,50);
     doc.text('Bill to', ML+54, y+11);
-    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...BODY_T);
-    doc.text(formData.client || '—', ML+6, y+26);
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,68,30);
-    doc.text(formData.job || '', ML+6, y+38);
-    y += 56;
+    let ly = y + 26;
+    doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...BODY_T);
+    doc.text(formData.client || '—', ML+6, ly); ly += 14;
+    if (formData.job) {
+        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,68,30);
+        doc.text(formData.job, ML+6, ly); ly += 11;
+    }
+    if (addrLines.length > 0) {
+        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(80,68,30);
+        for (const l of addrLines) { doc.text(l, ML+6, ly); ly += 10; }
+    }
 
-    // Layout drawings — each with a cost panel on the right
-    const PANEL_W = 148; // width of right-side cost panel
+    // Right column — TÉLÉPHONE
+    if (phones.length > 0) {
+        doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...BRAND);
+        doc.text('TÉLÉPHONE', ML + CW/2 + 8, y+11);
+        doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(120,100,50);
+        doc.text('Phone', ML + CW/2 + 60, y+11);
+        doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...BODY_T);
+        let py = y + 28;
+        for (const ph of phones) { doc.text(ph, ML + CW/2 + 8, py); py += 12; }
+    }
+
+    y += billH + 12;
+
+    // Layout drawings — each with a services/area summary panel on the right (NO PRICES)
+    const PANEL_W = 148;
     const savedIdx = currentPageIdx;
-    dimSizeMultiplier = 1.5; // 50% bigger dim numbers in proposal PDF
-    // Estimate cost panel content height
-    function panelContentH(matEntries, edgeFootage) {
-        let h = 27; // room name header + separator
-        h += 10 + 8; // sqft row + edge header
-        h += Object.keys(edgeFootage).length * 9; // one row per edge type
-        h += 6; // separator after metrics
-        for (const m of matEntries) {
-            h += 12; // color bar
-            const det = [m.supplier, m.thickness, m.finish].filter(Boolean).join('');
-            if (det) h += 9; // details line
-            h += 14 + 16 + 6; // before-tax block (14) + after-tax block (16) + separator (6)
+    dimSizeMultiplier = 1.5;
+    // Estimate summary panel content height (area + edges + sink/cooktop counts)
+    function panelContentH(edgeFootage, serviceRows) {
+        let h = 27;         // room name header + separator
+        h += 10;            // sqft row
+        const edgeTypes = Object.keys(edgeFootage);
+        if (edgeTypes.length > 0) {
+            h += 8;                        // edges header
+            h += edgeTypes.length * 9;     // one row per edge type
+            h += 7;                        // separator
         }
-        h += 16; // bottom padding
+        if (serviceRows.length > 0) {
+            h += 8;                        // services header
+            h += serviceRows.length * 9;   // one row per service
+        }
+        h += 10;
         return h;
     }
 
@@ -7092,9 +7125,16 @@ function generateProposal() {
         currentPageIdx = pi; syncPageIn(); render();
 
         const { dataURL: imgData, w: natW, h: natH } = croppedCanvasData(page);
-        const { roomSqft, matEntries, roomTotal } = calcRoomPricing(page);
+        const roomSqft = calcPageSqft(page);
         const edgeFootage = calcPageEdgeFootage(page);
-        const contentH = panelContentH(matEntries, edgeFootage);
+        const sinks = calcPageSinkCounts(page);
+        // Build services summary (counts only — NO PRICES in client-facing proposal)
+        const serviceRows = [];
+        if (sinks.overmount  > 0) serviceRows.push(['Évier overmount',  `× ${sinks.overmount}`]);
+        if (sinks.undermount > 0) serviceRows.push(['Évier undermount', `× ${sinks.undermount}`]);
+        if (sinks.vasque     > 0) serviceRows.push(['Évier vasque',     `× ${sinks.vasque}`]);
+        if (sinks.cooktops   > 0) serviceRows.push(['Cooktop',          `× ${sinks.cooktops}`]);
+        const contentH = panelContentH(edgeFootage, serviceRows);
 
         // Fixed zones: image always left 364pt, panel always right 148pt
         const IMG_ZONE_W = CW - PANEL_W - 10; // 364pt
@@ -7169,50 +7209,24 @@ function generateProposal() {
             }
         }
 
-        doc.setDrawColor(200,185,140); doc.setLineWidth(0.3);
-        doc.line(px+5, py2, px+pw-5, py2); py2 += 7;
-
-        // One block per material
-        for (const m of matEntries) {
-            // Build type tag for display
-            let tag = '';
-            if (m.mtype === 'option') tag = `[${m.mlabel || 'Option'}] `;
-            else if (m.mtype === 'page' && m.mlabel) tag = `[Page: ${m.mlabel}] `;
-            else if (m.mtype === 'zone' && m.mlabel) tag = `[${m.mlabel}] `;
-            const displayName = tag + (m.color || 'Matériau');
-            // Color name bar — highlight options in accent
-            if (m.mtype === 'option') doc.setFillColor(...ACCENT);
-            else doc.setFillColor(...BRAND);
-            doc.rect(px+3, py2-8, pw-6, 12, 'F');
-            doc.setFont('helvetica','bold'); doc.setFontSize(7.5);
-            if (m.mtype === 'option') doc.setTextColor(...BODY_T);
-            else doc.setTextColor(255,255,255);
-            doc.text(doc.splitTextToSize(displayName, pw-14)[0], px+6, py2);
-            py2 += 11;
-            // Details
-            const det = [m.supplier, m.thickness, m.finish].filter(Boolean).join('  |  ');
-            if (det) {
-                doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.setTextColor(100,85,40);
-                for (const l of doc.splitTextToSize(det, pw-10)) { doc.text(l, px+5, py2); py2 += 8; }
-            }
-            // Pre-tax — French bold, English italic
-            doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(80,68,30);
-            doc.text('Avant taxes :', px+5, py2);
-            doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(130,110,55);
-            doc.text('before tax', px+5, py2+7);
-            doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...BODY_T);
-            doc.text(fmt$(m.blendedPreT), px+pw-5, py2+3, {align:'right'});
-            py2 += 14;
-            // After-tax — French bold, English italic
-            doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(80,68,30);
-            doc.text('Taxes incluses :', px+5, py2);
-            doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(130,110,55);
-            doc.text('with taxes', px+5, py2+7);
-            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BRAND);
-            doc.text(fmt$(m.total), px+pw-5, py2+3, {align:'right'});
-            py2 += 16;
+        // Separator after edge list (if any)
+        if (Object.keys(edgeFootage).length > 0) {
             doc.setDrawColor(200,185,140); doc.setLineWidth(0.3);
-            doc.line(px+5, py2, px+pw-5, py2); py2 += 6;
+            doc.line(px+5, py2, px+pw-5, py2); py2 += 7;
+        }
+
+        // Services summary — counts only, NO PRICES
+        if (serviceRows.length > 0) {
+            doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
+            doc.text('SERVICES', px+5, py2);
+            py2 += 8;
+            for (const [k, v] of serviceRows) {
+                doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
+                doc.text(k, px+5, py2);
+                doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
+                doc.text(v, px+pw-5, py2, {align:'right'});
+                py2 += 9;
+            }
         }
 
         y += panelH + 16;
@@ -7224,106 +7238,97 @@ function generateProposal() {
     syncPageIn(); render();
 
     // ── OPTIONS SUMMARY — client selects one (forced to its own final page) ──
+    // Row-based layout: scales cleanly up to 5 options on a single page.
     const optsum = calcOptionsSummary();
     if (optsum.options.length > 0) {
         newPdfPage();
         y = 90;
         sectionHead('CLIENT OPTIONS — PLEASE SELECT ONE');
-        doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BODY_T);
         doc.text('Chaque option couvre l\'entièreté du projet.', ML, y, {maxWidth: CW});
-        y += 11;
+        y += 12;
         doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(120,100,50);
         doc.text('Each option covers the entire project — please select one.', ML, y, {maxWidth: CW});
-        y += 18;
+        y += 20;
 
-        const n = optsum.options.length;
-        const gap = 10;
-        const cardW = Math.min((CW - gap * (n - 1)) / n, 175);
-        const totalW = cardW * n + gap * (n - 1);
-        const startX = ML + (CW - totalW) / 2;
-        const cardH = 230;
+        // Project summary line (shared across every option)
+        doc.setFillColor(...TBL_BG); doc.rect(ML, y, CW, 18, 'F');
+        doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.rect(ML, y, CW, 18, 'S');
+        doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
+        doc.text(`Superficie totale / Total area:  ${optsum.totalSqft.toFixed(2)} pi² / ft²`, ML+8, y+12);
+        y += 26;
 
-        for (let i = 0; i < n; i++) {
+        const rowH   = 62;
+        const labelW = 64;
+        const totalW = 136;
+        const midX   = ML + labelW + 8;
+        const midW   = CW - labelW - totalW - 12;
+        const tx     = ML + CW - totalW;
+
+        for (let i = 0; i < optsum.options.length; i++) {
             const op = optsum.options[i];
-            const cx = startX + i * (cardW + gap);
+            // Page break guard
+            if (y + rowH > PH - FOOTER_H - 40) { newPdfPage(); y = 90; }
+
             const cy = y;
-
-            // Card background + border
+            // Row background + border
             doc.setFillColor(252, 250, 243);
-            doc.setDrawColor(...ACCENT);
-            doc.setLineWidth(0.8);
-            doc.roundedRect(cx, cy, cardW, cardH, 4, 4, 'FD');
+            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.7);
+            doc.roundedRect(ML, cy, CW, rowH, 4, 4, 'FD');
 
-            // Header bar
+            // Left — option label column (brand color bar)
             doc.setFillColor(...BRAND);
-            doc.rect(cx, cy, cardW, 18, 'F');
-            doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(255,255,255);
-            doc.text(op.label, cx + cardW/2, cy + 12, { align: 'center' });
+            doc.roundedRect(ML, cy, labelW, rowH, 4, 4, 'F');
+            // Square off the right edge so it blends with the rest of the row
+            doc.rect(ML + labelW - 4, cy, 4, rowH, 'F');
+            doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(255,255,255);
+            doc.text(op.label, ML + labelW/2, cy + rowH/2 + 3, { align: 'center' });
 
-            // Material name + details
-            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-            doc.text(doc.splitTextToSize(op.color || 'Matériau', cardW - 10)[0], cx + 5, cy + 32);
+            // Middle — material info + breakdown
+            doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BODY_T);
+            doc.text(doc.splitTextToSize(op.color || 'Matériau', midW)[0], midX, cy + 14);
             const det = [op.supplier, op.thickness, op.finish].filter(Boolean).join(' • ');
             if (det) {
-                doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(100,85,40);
-                doc.text(doc.splitTextToSize(det, cardW - 10)[0], cx + 5, cy + 42);
+                doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(100,85,40);
+                doc.text(doc.splitTextToSize(det, midW)[0], midX, cy + 25);
             }
+            // Breakdown lines
+            doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(80,68,30);
+            const bd1 = `Slabs: ${op.slabQty} × ${fmt$(op.pricePerSlab)} = ${fmt$(op.slabCost)}   ·   ${op.isDekton ? 'Dekton cut' : 'Découpe'}: ${fmt$(op.cuttingCost)}`;
+            doc.text(doc.splitTextToSize(bd1, midW)[0], midX, cy + 39);
+            let bd2 = `Services: ${fmt$(op.sharedServices)}`;
+            if (op.sharedCommittedMat > 0) bd2 += `   ·   Matériaux fixes: ${fmt$(op.sharedCommittedMat)}`;
+            doc.text(doc.splitTextToSize(bd2, midW)[0], midX, cy + 51);
 
-            // Breakdown rows
-            let by = cy + 60;
-            const lnH = 11;
-            doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...BODY_T);
-            const rows = [
-                [`${op.sqft.toFixed(1)} sqft`, ''],
-                [`Slabs: ${op.slabQty} × ${fmt$(op.pricePerSlab)}`, fmt$(op.slabCost)],
-                [`${op.isDekton ? 'Dekton cut' : 'Découpe'}`, fmt$(op.cuttingCost)],
-                ['Services', fmt$(op.sharedServices)],
-            ];
-            if (op.sharedCommittedMat > 0) rows.push(['Fixed materials', fmt$(op.sharedCommittedMat)]);
-            for (const [k, v] of rows) {
-                doc.text(k, cx + 5, by);
-                if (v) doc.text(v, cx + cardW - 5, by, { align: 'right' });
-                by += lnH;
-            }
-
-            // Pre-tax
-            by += 6;
-            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
-            doc.line(cx + 5, by - 4, cx + cardW - 5, by - 4);
-            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(80,68,30);
-            doc.text('Avant taxes', cx + 5, by);
-            doc.setFont('helvetica','italic'); doc.setFontSize(6); doc.setTextColor(130,110,55);
-            doc.text('before tax', cx + 5, by + 6);
-            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-            doc.text(fmt$(op.preT), cx + cardW - 5, by + 2, { align: 'right' });
-            by += 18;
-
-            // Total with tax (highlighted)
+            // Right — totals column (accent background)
             doc.setFillColor(...ACCENT);
-            doc.rect(cx + 3, by - 2, cardW - 6, 26, 'F');
-            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
-            doc.text('TOTAL', cx + 6, by + 8);
-            doc.setFont('helvetica','italic'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
-            doc.text('taxes incluses', cx + 6, by + 16);
-            doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...BRAND);
-            doc.text(fmt$(op.total), cx + cardW - 6, by + 14, { align: 'right' });
+            doc.rect(tx, cy, totalW, rowH, 'F');
+            // Rounded right edge to match card
+            doc.setFillColor(...ACCENT);
+            doc.roundedRect(tx + totalW - 4, cy, 4, rowH, 4, 4, 'F');
+            doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+            doc.text('Avant taxes / Before tax', tx + 8, cy + 14);
+            doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
+            doc.text(fmt$(op.preT), tx + totalW - 8, cy + 26, { align: 'right' });
+            // Dividing line
+            doc.setDrawColor(...BRAND); doc.setLineWidth(0.4);
+            doc.line(tx + 8, cy + 33, tx + totalW - 8, cy + 33);
+            doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...BRAND);
+            doc.text('TOTAL — taxes incluses', tx + 8, cy + 44);
+            doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(...BRAND);
+            doc.text(fmt$(op.total), tx + totalW - 8, cy + 58, { align: 'right' });
+
+            y += rowH + 8;
         }
 
-        y += cardH + 14;
-        doc.setFont('helvetica','italic'); doc.setFontSize(7.5); doc.setTextColor(120,100,50);
+        y += 6;
+        doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(120,100,50);
         const note = 'Veuillez choisir une option. / Please select one option — pricing reflects each scenario independently.';
         const noteLines = doc.splitTextToSize(note, CW);
-        for (const ln of noteLines) { doc.text(ln, PW/2, y, { align: 'center' }); y += 10; }
+        for (const ln of noteLines) { doc.text(ln, PW/2, y, { align: 'center' }); y += 11; }
     }
 
-    // Notes
-    if (formData.notes && formData.notes.trim()) {
-        sectionHead('NOTES');
-        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-        const lines = doc.splitTextToSize(formData.notes, CW);
-        for (const line of lines) { checkY(13); doc.text(line, ML, y); y += 13; }
-        y += 4;
-    }
+    // (Internal notes intentionally omitted from client-facing proposal)
 
     // Terms note
     checkY(20);
