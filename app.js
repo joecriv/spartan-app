@@ -5316,35 +5316,80 @@ function renderPricingPanel() {
         return { mat, html, matSubtotal };
     }
 
-    // Group materials by type (Page or Option — Zones have been removed)
-    const pagesGrp = [], optionsGrp = [];
+    // Group page-type blocks BY pageId (a page can have 2+ linked materials = per-page options)
+    const optionsGrp = [];
+    const pageBlocksByPageId = new Map(); // pageId -> array of block objects (mat + html + matSubtotal)
+    const unlinkedPageBlocks = [];        // blocks with pageId missing
     for (const [mid, msqft] of Object.entries(matSqftMap)) {
         const b = buildMatBlock(mid, msqft);
         const t = (b.mat.type || 'page');
-        if (t === 'option') optionsGrp.push({ mid, ...b });
-        else                pagesGrp.push({ mid, ...b });  // default: page
+        if (t === 'option') { optionsGrp.push({ mid, ...b }); continue; }
+        // page-type
+        const pid = b.mat.pageId;
+        if (pid == null) { unlinkedPageBlocks.push({ mid, ...b }); continue; }
+        if (!pageBlocksByPageId.has(pid)) pageBlocksByPageId.set(pid, []);
+        pageBlocksByPageId.get(pid).push({ mid, ...b });
     }
 
-    // Warn about canvas pages that have shapes but no linked Page-type material
-    const linkedPageIds = new Set(pagesGrp.map(b => b.mat.pageId).filter(Boolean));
-    const orphanPages = pages.filter(p => (pageSqftById[p.id] || 0) > 0 && !linkedPageIds.has(p.id));
+    // Warn about canvas pages that have shapes but no linked material
+    const orphanPages = pages.filter(p => (pageSqftById[p.id] || 0) > 0 && !pageBlocksByPageId.has(p.id));
     if (orphanPages.length > 0) {
         sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px dashed #e0a050;border-radius:6px;padding:8px;background:#1f1b10">
             <div style="color:#e0a050;font-size:11px;font-weight:700;margin-bottom:3px">⚠ Page(s) without a linked material</div>
-            <div style="color:#aaa;font-size:10px">These canvas pages have shapes but no Page-type material assigned: ${orphanPages.map(p=>p.name).join(', ')}. Add a material of type "Page" and link it to each page to include them in pricing.</div>
+            <div style="color:#aaa;font-size:10px">These canvas pages have shapes but no linked material: ${orphanPages.map(p=>p.name).join(', ')}. Add a material of type "Page" and link it to each page to include them in pricing.</div>
         </div>`;
     }
 
-    // ── Pages: each Page-material gets its own subtotal section ────
-    for (const b of pagesGrp) {
+    // ── Pages: one section per canvas page, with 1 or more linked materials ──
+    // Track per-page selected option subtotals for the "committed" total.
+    // (The committed grand-total assumes the FIRST option of each multi-option page;
+    //  full combinations are rendered in their own section below.)
+    let anyMultiOptionPage = false;
+    // Iterate in page order for a stable layout
+    for (const page of pages) {
+        const blocks = pageBlocksByPageId.get(page.id);
+        if (!blocks || blocks.length === 0) continue;
+
+        if (blocks.length === 1) {
+            // Single-material page — render as before
+            const b = blocks[0];
+            materialCostTotal += b.matSubtotal;
+            sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px solid #b09030;border-radius:6px;padding:8px;background:#1f1f1f">
+                <div class="price-check-label" style="color:#b09030">PAGE — ${page.name}</div>
+                ${b.html}
+                <div style="text-align:right;margin-top:6px;font-size:12px;font-weight:700;color:#b09030">Page subtotal: ${fmt$(b.matSubtotal)}</div>
+            </div>`;
+        } else {
+            // Multi-option page — render side-by-side option cards
+            anyMultiOptionPage = true;
+            // Committed total uses the FIRST option (used for the "Committed subtotal" label only)
+            materialCostTotal += blocks[0].matSubtotal;
+            let optsInner = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">';
+            blocks.forEach((b, i) => {
+                const optLabel = `Option ${i+1}`;
+                const matName = [b.mat.color, b.mat.thickness].filter(Boolean).join(' · ') || 'Material';
+                optsInner += `<div style="flex:1;min-width:240px;background:#141414;border:1px solid #b09030;border-radius:4px;padding:6px;display:flex;flex-direction:column">
+                    <div style="font-size:11px;font-weight:700;color:#b09030;margin-bottom:4px;text-align:center;border-bottom:1px solid #333;padding-bottom:3px">${optLabel} — ${matName}</div>
+                    <div style="flex:1">${b.html}</div>
+                    <div style="text-align:right;margin-top:4px;padding:5px;background:#2d3a10;border-radius:4px;font-size:12px;font-weight:700;color:#b09030">${optLabel} total: ${fmt$(b.matSubtotal)}</div>
+                </div>`;
+            });
+            optsInner += '</div>';
+            sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px solid #b09030;border-radius:6px;padding:8px;background:#1f1f1f">
+                <div class="price-check-label" style="color:#b09030">PAGE — ${page.name} · ${blocks.length} options</div>
+                <p style="font-size:9px;color:#888;margin:2px 0 6px;font-style:italic">Client selects one material option for this page. Services on this page are shared across options.</p>
+                ${optsInner}
+            </div>`;
+        }
+    }
+
+    // Unlinked page-materials (safety fallback)
+    for (const b of unlinkedPageBlocks) {
         materialCostTotal += b.matSubtotal;
-        const linkedPage = pages.find(p => p.id === b.mat.pageId);
-        const name = linkedPage ? linkedPage.name : (b.mat.label || 'Unassigned');
-        const unassignedNote = linkedPage ? '' : ' <span style="font-size:9px;color:#e0a050">(not linked to any page)</span>';
-        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px solid #b09030;border-radius:6px;padding:8px;background:#1f1f1f">
-            <div class="price-check-label" style="color:#b09030">PAGE — ${name}${unassignedNote}</div>
+        sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px dashed #e0a050;border-radius:6px;padding:8px;background:#1a1a1a">
+            <div class="price-check-label" style="color:#e0a050">Unassigned material <span style="font-size:9px">(not linked to any page)</span></div>
             ${b.html}
-            <div style="text-align:right;margin-top:6px;font-size:12px;font-weight:700;color:#b09030">Page subtotal: ${fmt$(b.matSubtotal)}</div>
+            <div style="text-align:right;margin-top:6px;font-size:12px;font-weight:700;color:#b09030">Subtotal: ${fmt$(b.matSubtotal)}</div>
         </div>`;
     }
 
@@ -5432,13 +5477,68 @@ function renderPricingPanel() {
 
     // ── Grand total of committed costs (pages + services) ──
     const committedTotal = materialCostTotal + serviceCostTotal;
-    const committedLabel = optionsGrp.length > 0 ? 'Committed subtotal (shared)' : 'Grand Total';
+    let committedLabel;
+    if (optionsGrp.length > 0) committedLabel = 'Committed subtotal (shared)';
+    else if (anyMultiOptionPage)  committedLabel = 'Grand Total — reference (using Option 1 of each multi-option page)';
+    else                           committedLabel = 'Grand Total';
     sumHtml += `<div class="room-pricing-section" style="margin-top:8px;padding:8px;background:#2d3a10;border:1px solid #b09030;border-radius:6px">
         <div class="price-check-row" style="font-weight:bold;font-size:14px">
             <span class="price-check-name">${committedLabel}</span>
             <span class="price-check-val">${fmt$(committedTotal)}</span>
         </div>
     </div>`;
+
+    // ── Combinations summary (cross-product of per-page options) ──
+    if (anyMultiOptionPage) {
+        const pageEntries = [];
+        for (const page of pages) {
+            const blocks = pageBlocksByPageId.get(page.id);
+            if (!blocks || blocks.length === 0) continue;
+            pageEntries.push({ page, blocks });
+        }
+        let combos = [[]];
+        for (const { page, blocks } of pageEntries) {
+            const nc = [];
+            for (const c of combos) {
+                for (let i = 0; i < blocks.length; i++) {
+                    nc.push([...c, { page, blockIdx: i, block: blocks[i] }]);
+                }
+            }
+            combos = nc;
+        }
+
+        let combosHtml = `<div class="room-pricing-section" style="margin-top:10px;border:2px dashed #b09030;border-radius:6px;padding:8px">
+            <div class="price-check-label" style="color:#b09030">COMBINATIONS — ${combos.length} possible scenario${combos.length>1?'s':''}</div>
+            <p style="font-size:9px;color:#999;margin:2px 0 8px;font-style:italic">Cross-product of per-page options. Shared project services are added once per combination.</p>`;
+        combos.forEach((combo, ci) => {
+            let matSum = 0;
+            const picks = combo.map(c => {
+                matSum += c.block.matSubtotal;
+                const matName = [c.block.mat.color, c.block.mat.thickness].filter(Boolean).join(' · ') || 'Material';
+                const n = pageBlocksByPageId.get(c.page.id).length;
+                const optLabel = n > 1 ? ` · Option ${c.blockIdx+1}` : '';
+                return { name: `${c.page.name}${optLabel} (${matName})`, cost: c.block.matSubtotal };
+            });
+            const total = matSum + serviceCostTotal;
+            combosHtml += `<div style="margin-bottom:8px;padding:8px;background:#141414;border:1px solid #333;border-radius:4px">
+                <div style="font-size:11px;font-weight:700;color:#b09030;margin-bottom:4px">Combination ${ci+1}</div>
+                ${picks.map(p => `<div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;padding:2px 0">
+                    <span>${p.name}</span>
+                    <span>${fmt$(p.cost)}</span>
+                </div>`).join('')}
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;padding:2px 0;border-top:1px dashed #333;margin-top:3px">
+                    <span>Project services (shared)</span>
+                    <span>${fmt$(serviceCostTotal)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:#b09030;padding:5px 6px;border-top:1px solid #b09030;margin-top:3px;background:#2d3a10;border-radius:3px">
+                    <span>TOTAL — Combo ${ci+1}</span>
+                    <span>${fmt$(total)}</span>
+                </div>
+            </div>`;
+        });
+        combosHtml += '</div>';
+        sumHtml += combosHtml;
+    }
 
     // ── Options: side-by-side scenarios, each = committed baseline + option's own material ──
     if (optionsGrp.length > 0) {
@@ -7019,6 +7119,85 @@ function calcPagePricing(page) {
 }
 
 // Project-wide fees applied once (not attributable to a single page)
+// Per-page pricing for all linked materials (multi-option pages).
+// Returns shared page services + an options[] array, one entry per linked material.
+// If 2+ materials are linked to the same page, they are treated as options the
+// client must choose between.
+function calcPageOptions(page) {
+    const roomSqft = calcPageSqft(page);
+    const mats = (formData.materials||[]).filter(m =>
+        (m.type||'page') === 'page' && m.pageId === page.id
+    );
+
+    // Edge services (shared across options)
+    const edgeFootage = calcPageEdgeFootage(page);
+    const pencilLf = (edgeFootage.pencil || 0) + (edgeFootage.polished || 0);
+    const fini45Lf = edgeFootage.waterfall || 0;
+    const lamineLf = edgeFootage.mitered || 0;
+    const pencilCost = pencilLf * (pricingData.rates.pencil || 0);
+    const fini45Cost = fini45Lf * (pricingData.rates.fini45 || 0);
+    const lamineCost = lamineLf * (pricingData.rates.lamine || 0);
+
+    // Sink/cooktop/farmhouse (shared across options)
+    const sinks = calcPageSinkCounts(page);
+    const evierOverCost   = sinks.overmount  * (pricingData.rates.evierOver   || 0);
+    const evierUnderCost  = sinks.undermount * (pricingData.rates.evierUnder  || 0);
+    const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
+    const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
+    const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
+
+    const servicesCost = pencilCost + fini45Cost + lamineCost
+                       + evierOverCost + evierUnderCost + evierVasqueCost
+                       + cooktopCost + farmSinkCost;
+
+    // Per-option (material + cutting); services are added to each option's subtotal
+    const options = mats.map(mat => {
+        const isDekton = (mat.supplier||'').toLowerCase().includes('dekton')
+                      || (mat.color   ||'').toLowerCase().includes('dekton')
+                      || (mat.thickness||'').toLowerCase().includes('dekton');
+        const matCost = roomSqft * getMatPriceSqft(mat.id);
+        const cutRate = isDekton ? (pricingData.rates.dektonCoupe||0) : (pricingData.rates.coupe||0);
+        const cutCost = roomSqft * cutRate;
+        const optionSubtotal = matCost + cutCost + servicesCost;
+        return { material: mat, isDekton, matCost, cutCost, cutRate, optionSubtotal };
+    });
+
+    return {
+        page, roomSqft,
+        edgeFootage, pencilLf, fini45Lf, lamineLf, pencilCost, fini45Cost, lamineCost,
+        sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost, farmSinkCost,
+        servicesCost,
+        options,                      // one entry per linked material (0+ entries)
+        multi: options.length > 1     // convenience flag
+    };
+}
+
+// Cross-product of per-page options across all pages that have shapes.
+// Returns { pageOptionsList: [calcPageOptions(p), ...], combos: [[{pageOpt, optionIdx},...], ...] }.
+function calcAllCombinations() {
+    const pageOptionsList = [];
+    for (const page of pages) {
+        const po = calcPageOptions(page);
+        if (po.roomSqft <= 0) continue;   // skip empty canvas pages
+        pageOptionsList.push(po);
+    }
+    if (pageOptionsList.length === 0) return { combos: [], pageOptionsList };
+
+    // Cross-product — pages with zero options contribute a null selection.
+    let combos = [[]];
+    for (const po of pageOptionsList) {
+        const nextCombos = [];
+        const n = Math.max(1, po.options.length);
+        for (const combo of combos) {
+            for (let i = 0; i < n; i++) {
+                nextCombos.push([...combo, { pageOpt: po, optionIdx: po.options.length > 0 ? i : -1 }]);
+            }
+        }
+        combos = nextCombos;
+    }
+    return { combos, pageOptionsList };
+}
+
 function calcProjectFees() {
     let totalSqft = 0;
     for (const page of pages) totalSqft += calcPageSqft(page);
@@ -7299,24 +7478,34 @@ function generateProposal() {
     const PANEL_W = 190;
     const savedIdx = currentPageIdx;
     dimSizeMultiplier = 1.5;
-    // Estimate panel content height (material header + edges + services + subtotal)
-    function panelContentH(pp) {
-        let h = 27; // room name header + separator
-        if (pp.pageMat) h += 11 + 9 + 6; // material name + details + spacer
+    // Estimate panel content height for a page with 1+ option(s) (supports multi-option pages)
+    function panelContentH(po) {
+        let h = 22; // room name header + separator
         h += 10; // sqft
-        const edgeTypes = Object.keys(pp.edgeFootage);
+        const edgeTypes = Object.keys(po.edgeFootage);
         if (edgeTypes.length > 0) h += 8 + edgeTypes.length * 9 + 7;
-        // Service rows
         let nServiceLines = 0;
-        if (pp.sinks.overmount  > 0) nServiceLines++;
-        if (pp.sinks.undermount > 0) nServiceLines++;
-        if (pp.sinks.vasque     > 0) nServiceLines++;
-        if (pp.sinks.cooktops   > 0) nServiceLines++;
+        if (po.sinks.overmount  > 0) nServiceLines++;
+        if (po.sinks.undermount > 0) nServiceLines++;
+        if (po.sinks.vasque     > 0) nServiceLines++;
+        if (po.sinks.cooktops   > 0) nServiceLines++;
+        if (po.sinks.farmSinks  > 0) nServiceLines++;
         if (nServiceLines > 0) h += 8 + nServiceLines * 9 + 7;
-        // Price breakdown
-        if (pp.pageMat) h += 8 + 10 + 10 + 6; // header + mat line + cut line + sep
-        if (pp.servicesCost > 0) h += 10; // services line
-        h += 24; // page subtotal box
+        if (po.options.length === 0) {
+            if (po.servicesCost > 0) h += 26;
+        } else {
+            po.options.forEach((opt, i) => {
+                if (po.options.length > 1) h += 9; // "OPTION N" label
+                h += 10; // material name
+                const matDet = [opt.material.supplier, opt.material.thickness, opt.material.finish].filter(Boolean).join(' • ');
+                if (matDet) h += 8;
+                h += 10; // matériel + découpe
+                if (po.servicesCost > 0) h += 10; // services line
+                h += 26; // subtotal box
+                if (i < po.options.length - 1) h += 6; // gap
+            });
+        }
+        h += 6; // bottom padding
         return h;
     }
 
@@ -7356,30 +7545,27 @@ function generateProposal() {
     hovCorner = null; hovEdge = null;
 
     // Collect per-page pricing for the final summary
-    const pagePricings = [];
+    const pageOptionsByPage = []; // array of po objects
 
     for (let pi=0; pi<pages.length; pi++) {
         const page = pages[pi];
         currentPageIdx = pi; syncPageIn(); render();
 
         const { dataURL: imgData, w: natW, h: natH } = croppedCanvasData(page);
-        const pp = calcPagePricing(page);
-        pagePricings.push(pp);
-        const { roomSqft, pageMat, edgeFootage, sinks } = pp;
-        const contentH = panelContentH(pp);
+        const po = calcPageOptions(page);
+        pageOptionsByPage.push(po);
+        const { roomSqft, edgeFootage, sinks, options } = po;
+        const contentH = panelContentH(po);
 
-        // Fixed zones: image always left 364pt, panel always right 148pt
-        const IMG_ZONE_W = CW - PANEL_W - 10; // 364pt
+        const IMG_ZONE_W = CW - PANEL_W - 10;
         const MAX_IMG_H  = 200;
         const scale = Math.min(IMG_ZONE_W / natW, MAX_IMG_H / natH);
         const imgW = natW * scale, imgH = natH * scale;
         const panelH = Math.max(imgH, contentH);
         const totalBlockH = 24 + panelH + 20;
-
-        // Ensure the entire block stays on one page
         if (y + totalBlockH > PH - FOOTER_H - 10) newPdfPage();
 
-        // Section header — French bold, English small italic on line below
+        // Section header
         doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(...BRAND);
         doc.text(`DISPOSITION — ${page.name.toUpperCase()}`, ML, y);
         doc.setFont('helvetica','italic'); doc.setFontSize(7); doc.setTextColor(120,100,50);
@@ -7388,13 +7574,12 @@ function generateProposal() {
         doc.line(ML, y + 11, PW-MR, y + 11);
         y += 20;
 
-        // Center image horizontally within its fixed zone
+        // Image
         const imgX = ML + Math.floor((IMG_ZONE_W - imgW) / 2);
-        // Center image vertically within panel height
         const imgY = y + Math.floor((panelH - imgH) / 2);
         doc.addImage(imgData, 'PNG', imgX, imgY, imgW, imgH);
 
-        // Panel — always fixed position and width
+        // Panel
         const px = ML + IMG_ZONE_W + 10, pw = PANEL_W;
         doc.setFillColor(...TBL_BG);
         doc.rect(px, y, pw, panelH, 'F');
@@ -7405,24 +7590,10 @@ function generateProposal() {
 
         // Room name header
         doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
-        doc.text(page.name.toUpperCase(), px + pw/2, py2, {align:'center'});
+        doc.text(page.name.toUpperCase() + (options.length > 1 ? ` · ${options.length} OPTIONS` : ''), px + pw/2, py2, {align:'center'});
         py2 += 5;
         doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
         doc.line(px+5, py2, px+pw-5, py2); py2 += 9;
-
-        // ── Material for this page ──
-        if (pageMat) {
-            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
-            doc.text(doc.splitTextToSize(pageMat.color || 'Matériau', pw-10)[0], px+5, py2);
-            py2 += 9;
-            const matDet = [pageMat.supplier, pageMat.thickness, pageMat.finish].filter(Boolean).join(' • ');
-            if (matDet) {
-                doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.setTextColor(100,85,40);
-                doc.text(doc.splitTextToSize(matDet, pw-10)[0], px+5, py2);
-                py2 += 8;
-            }
-            py2 += 4;
-        }
 
         // ── Square footage ──
         doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(80,68,30);
@@ -7431,7 +7602,7 @@ function generateProposal() {
         doc.text(`${roomSqft.toFixed(2)} pi² / ft²`, px+pw-5, py2, {align:'right'});
         py2 += 10;
 
-        // ── Edge footage by profile ──
+        // ── Edge footage by profile (shared across options) ──
         const edgeTypes = Object.keys(edgeFootage);
         if (edgeTypes.length > 0) {
             doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
@@ -7456,7 +7627,7 @@ function generateProposal() {
             doc.line(px+5, py2, px+pw-5, py2); py2 += 7;
         }
 
-        // ── Sink / cooktop services (counts) ──
+        // ── Sink / cooktop services (counts, shared) ──
         const serviceRows = [];
         if (sinks.overmount  > 0) serviceRows.push(['Évier overmount',  sinks.overmount]);
         if (sinks.undermount > 0) serviceRows.push(['Évier undermount', sinks.undermount]);
@@ -7478,35 +7649,63 @@ function generateProposal() {
             doc.line(px+5, py2, px+pw-5, py2); py2 += 7;
         }
 
-        // ── Price breakdown ──
-        if (pageMat) {
-            doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
-            doc.text('PRIX / PRICE', px+5, py2);
-            py2 += 8;
-            doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
-            doc.text('Matériel + découpe', px+5, py2);
-            doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
-            doc.text(fmt$(pp.matCost + pp.cutCost), px+pw-5, py2, {align:'right'});
-            py2 += 10;
+        // ── Per-option price blocks ──
+        if (options.length === 0) {
+            if (po.servicesCost > 0) {
+                doc.setFillColor(...ACCENT);
+                doc.rect(px+3, py2, pw-6, 20, 'F');
+                doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+                doc.text('SOUS-TOTAL', px+7, py2+9);
+                doc.setFont('helvetica','italic'); doc.setFontSize(5.5); doc.setTextColor(...BRAND);
+                doc.text('services only', px+7, py2+16);
+                doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
+                doc.text(fmt$(po.servicesCost), px+pw-7, py2+14, {align:'right'});
+                py2 += 26;
+            }
+        } else {
+            options.forEach((opt, i) => {
+                if (options.length > 1) {
+                    doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+                    doc.text(`OPTION ${i+1}`, px+5, py2);
+                    py2 += 9;
+                }
+                // Material name
+                doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
+                doc.text(doc.splitTextToSize(opt.material.color || 'Matériau', pw-10)[0], px+5, py2);
+                py2 += 10;
+                const matDet = [opt.material.supplier, opt.material.thickness, opt.material.finish].filter(Boolean).join(' • ');
+                if (matDet) {
+                    doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.setTextColor(100,85,40);
+                    doc.text(doc.splitTextToSize(matDet, pw-10)[0], px+5, py2);
+                    py2 += 8;
+                }
+                // Matériel + découpe
+                doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
+                doc.text('Matériel + découpe', px+5, py2);
+                doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
+                doc.text(fmt$(opt.matCost + opt.cutCost), px+pw-5, py2, {align:'right'});
+                py2 += 10;
+                // Services
+                if (po.servicesCost > 0) {
+                    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
+                    doc.text('Services', px+5, py2);
+                    doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
+                    doc.text(fmt$(po.servicesCost), px+pw-5, py2, {align:'right'});
+                    py2 += 10;
+                }
+                // Subtotal box
+                doc.setFillColor(...ACCENT);
+                doc.rect(px+3, py2, pw-6, 20, 'F');
+                doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+                doc.text(options.length > 1 ? `OPT ${i+1} SOUS-TOTAL` : 'SOUS-TOTAL', px+7, py2+9);
+                doc.setFont('helvetica','italic'); doc.setFontSize(5.5); doc.setTextColor(...BRAND);
+                doc.text('subtotal (before tax)', px+7, py2+16);
+                doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
+                doc.text(fmt$(opt.optionSubtotal), px+pw-7, py2+14, {align:'right'});
+                py2 += 26;
+                if (i < options.length - 1) py2 += 6;
+            });
         }
-        if (pp.servicesCost > 0) {
-            doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
-            doc.text('Services', px+5, py2);
-            doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
-            doc.text(fmt$(pp.servicesCost), px+pw-5, py2, {align:'right'});
-            py2 += 10;
-        }
-
-        // ── Page subtotal box (highlighted) ──
-        doc.setFillColor(...ACCENT);
-        doc.rect(px+3, py2, pw-6, 20, 'F');
-        doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
-        doc.text('SOUS-TOTAL', px+7, py2+9);
-        doc.setFont('helvetica','italic'); doc.setFontSize(5.5); doc.setTextColor(...BRAND);
-        doc.text('subtotal (before tax)', px+7, py2+16);
-        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
-        doc.text(fmt$(pp.pageSubtotal), px+pw-7, py2+14, {align:'right'});
-        py2 += 24;
 
         y += panelH + 16;
     }
@@ -7516,52 +7715,26 @@ function generateProposal() {
     selectedJoint = _pSavedJoint; hovCorner = _pSavedHovC; hovEdge = _pSavedHovE;
     syncPageIn(); render();
 
-    // ── PROJECT SUMMARY — sums per-page subtotals + project-level fees ──
-    // Skipped when Options exist (the options section below supplies full scenario totals).
+    // ── PROJECT SUMMARY / COMBINATIONS ──
+    // Skipped when whole-project Options exist (those get their own section below).
     const __preOptsum = calcOptionsSummary();
-    const hasOptions = __preOptsum.options.length > 0;
-    if (!hasOptions && pagePricings.length > 0) {
+    const hasWholeProjectOptions = __preOptsum.options.length > 0;
+    const pagesWithShapes = pageOptionsByPage.filter(po => po.roomSqft > 0);
+    const anyMulti = pagesWithShapes.some(po => po.options.length > 1);
+
+    if (!hasWholeProjectOptions && pagesWithShapes.length > 0) {
         const TAX = 1.14975;
         const fees = calcProjectFees();
-        const pagesSubtotal = pagePricings.reduce((s, pp) => s + pp.pageSubtotal, 0);
-        const preT = pagesSubtotal + fees.total;
-        const withTax = preT * TAX;
 
-        // Room for the summary block (force new page if needed)
-        const needH = 60 + pagePricings.length * 14 + 14 * 4 + 30;
-        if (y + needH > PH - FOOTER_H - 10) newPdfPage();
+        // Force summary onto a clean page so it always reads as the conclusion
+        newPdfPage();
+        y = 90;
+        sectionHead(anyMulti ? 'SOMMAIRE — COMBINAISONS POSSIBLES / POSSIBLE COMBINATIONS' : 'SOMMAIRE DU PROJET / PROJECT SUMMARY');
 
-        sectionHead('SOMMAIRE DU PROJET / PROJECT SUMMARY');
-
-        // Per-page rows
-        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-        for (const pp of pagePricings) {
-            checkY(13);
-            doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-            doc.text(pp.page.name, ML + 6, y);
-            const matText = pp.pageMat ? (pp.pageMat.color || '') : '(no material)';
-            doc.setFont('helvetica','italic'); doc.setFontSize(7.5); doc.setTextColor(120,100,50);
-            doc.text(matText, ML + 110, y);
-            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-            doc.text(fmt$(pp.pageSubtotal), PW - MR - 6, y, {align:'right'});
-            y += 13;
-        }
-
-        // Page subtotal divider
-        y += 2;
-        doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
-        doc.line(ML, y, PW - MR, y);
-        y += 11;
-        doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(80,68,30);
-        doc.text('Sous-total des pages / Pages subtotal', ML + 6, y);
-        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BODY_T);
-        doc.text(fmt$(pagesSubtotal), PW - MR - 6, y, {align:'right'});
-        y += 16;
-
-        // Project-level fees
+        // Fees section (shared across all combinations)
         if (fees.installCost > 0 || fees.measCost > 0 || fees.polCost > 0) {
             doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
-            doc.text('FRAIS DE PROJET / PROJECT FEES', ML + 6, y);
+            doc.text('FRAIS DE PROJET / PROJECT FEES — shared', ML + 6, y);
             y += 11;
             doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
             if (fees.installCost > 0) {
@@ -7597,25 +7770,91 @@ function generateProposal() {
             y += 11;
         }
 
-        // Pre-tax total
-        checkY(20);
-        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(80,68,30);
-        doc.text('Total avant taxes / Subtotal before tax', ML + 6, y);
-        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...BODY_T);
-        doc.text(fmt$(preT), PW - MR - 6, y, {align:'right'});
-        y += 16;
+        // Build cross-product of per-page options
+        let combos = [[]];
+        for (const po of pagesWithShapes) {
+            const n = Math.max(1, po.options.length);
+            const nc = [];
+            for (const c of combos) {
+                for (let i = 0; i < n; i++) {
+                    nc.push([...c, { po, optionIdx: po.options.length > 0 ? i : -1 }]);
+                }
+            }
+            combos = nc;
+        }
 
-        // Grand total with tax (highlighted)
-        checkY(36);
-        doc.setFillColor(...ACCENT);
-        doc.rect(ML, y, CW, 32, 'F');
-        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...BRAND);
-        doc.text('GRAND TOTAL', ML + 10, y + 14);
-        doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(...BRAND);
-        doc.text('taxes incluses / with taxes (GST 5% + QST 9.975%)', ML + 10, y + 24);
-        doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...BRAND);
-        doc.text(fmt$(withTax), PW - MR - 10, y + 22, {align:'right'});
-        y += 40;
+        if (anyMulti) {
+            doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(120,100,50);
+            doc.text(`${combos.length} combination${combos.length>1?'s':''} — one per possible client selection`, ML, y, {maxWidth: CW});
+            y += 14;
+        }
+
+        // Render each combination as a bordered card
+        combos.forEach((combo, ci) => {
+            const cardH = 30 + combo.length * 12 + 32; // header + rows + total
+            if (y + cardH > PH - FOOTER_H - 10) newPdfPage();
+            const cy = y;
+
+            // Card background
+            doc.setFillColor(252, 250, 243);
+            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.7);
+            doc.roundedRect(ML, cy, CW, cardH, 4, 4, 'FD');
+
+            // Header bar
+            doc.setFillColor(...BRAND);
+            doc.rect(ML, cy, CW, 18, 'F');
+            doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(255,255,255);
+            doc.text(anyMulti ? `COMBINAISON ${ci+1} / COMBINATION ${ci+1}` : 'SOMMAIRE / SUMMARY', ML + 10, cy + 12);
+
+            // Combo rows
+            let ry = cy + 30;
+            let matSum = 0;
+            for (const pick of combo) {
+                const po2 = pick.po;
+                const opt = pick.optionIdx >= 0 ? po2.options[pick.optionIdx] : null;
+                const subtotal = opt ? opt.optionSubtotal : po2.servicesCost;
+                matSum += subtotal;
+                const pageLabel = po2.options.length > 1
+                    ? `${po2.page.name} — Option ${pick.optionIdx+1}`
+                    : po2.page.name;
+                const matName = opt ? (opt.material.color || 'Matériau') : '(services only)';
+                doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+                doc.text(pageLabel, ML + 10, ry);
+                doc.setFont('helvetica','italic'); doc.setFontSize(8); doc.setTextColor(120,100,50);
+                doc.text(matName, ML + 140, ry);
+                doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
+                doc.text(fmt$(subtotal), ML + CW - 10, ry, {align:'right'});
+                ry += 12;
+            }
+
+            // Fees + totals line
+            const preT = matSum + fees.total;
+            const withTax = preT * TAX;
+            ry += 2;
+            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
+            doc.line(ML + 10, ry, ML + CW - 10, ry);
+            ry += 6;
+            if (fees.total > 0) {
+                doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(100,85,40);
+                doc.text(`+ Frais de projet / Project fees  (${fmt$(fees.total)})`, ML + 10, ry);
+                doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
+                doc.text(`Avant taxes: ${fmt$(preT)}`, ML + CW - 10, ry, {align:'right'});
+                ry += 10;
+            }
+
+            // Total (highlighted)
+            doc.setFillColor(...ACCENT);
+            doc.rect(ML + 3, ry, CW - 6, 18, 'F');
+            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BRAND);
+            doc.text(anyMulti ? `TOTAL COMBO ${ci+1}` : 'GRAND TOTAL', ML + 10, ry + 12);
+            doc.setFont('helvetica','italic'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+            doc.text('taxes incluses / with taxes', ML + 110, ry + 12);
+            doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...BRAND);
+            doc.text(fmt$(withTax), ML + CW - 10, ry + 13, {align:'right'});
+            ry += 22;
+
+            y = cy + cardH + 10;
+        });
     }
 
     // ── OPTIONS SUMMARY — client selects one (forced to its own final page) ──
