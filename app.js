@@ -4312,10 +4312,18 @@ function matHtml(m) {
     // Get unique brands
     const brands = [...new Set(matDb.map(d => d.supplier).filter(Boolean))].sort();
     const selBrand = (m.dbId ? (matDb.find(d=>d.id===m.dbId)||{}).supplier : '') || m._brand || m.supplier || '';
+    // Resilience: if the stored brand isn't in the catalog (e.g., catalog not yet loaded),
+    // add it to the options so the selection is visually preserved.
+    const brandOpts = [...new Set([...brands, selBrand].filter(Boolean))].sort();
     // Colors for selected brand
     const colors = selBrand ? matDb.filter(d => d.supplier === selBrand) : [];
     const selDbId = m.dbId || 0;
     const linked = matDb.find(d => d.id === selDbId);
+    // If we have a stored color name but the catalog entry isn't present (stale matDb),
+    // keep the stored color visible in the color dropdown as a fallback option.
+    const fallbackColorOpt = (!linked && selDbId && m.color)
+        ? `<option value="${selDbId}" selected>${m.color}</option>`
+        : '';
     // Finishes + thicknesses from linked color
     const availFinishes = linked ? (linked.finishes||[]) : [];
     const availThick = linked ? (linked.thicknesses||[]) : [];
@@ -4345,11 +4353,12 @@ function matHtml(m) {
             <div style="flex:1;min-width:80px"><span class="mat-lbl">Brand</span>
                 <select class="mat-input mat-brand-sel" data-mid="${m.id}" style="width:100%">
                     <option value="">— Brand —</option>
-                    ${brands.map(b => `<option value="${b}" ${b===selBrand?'selected':''}>${b}</option>`).join('')}
+                    ${brandOpts.map(b => `<option value="${b}" ${b===selBrand?'selected':''}>${b}</option>`).join('')}
                 </select></div>
             <div style="flex:2;min-width:120px"><span class="mat-lbl">Color</span>
                 <select class="mat-input mat-color-sel" data-mid="${m.id}" style="width:100%">
                     <option value="0">— Color —</option>
+                    ${fallbackColorOpt}
                     ${colors.map(c => `<option value="${c.id}" ${c.id===selDbId?'selected':''}>${c.name}</option>`).join('')}
                 </select></div>
         </div>
@@ -9066,8 +9075,8 @@ window.addEventListener('resize', () => { if (kitOpen) { kitResizeCanvas(); kitR
 function initApp() {
     _initSession();
     load();
+    loadMatDb();   // Load material catalog FIRST so brand/color dropdowns render with options
     loadForm();
-    loadMatDb();
     loadPricing();
     // Compute _nextPageId from loaded pages
     _nextPageId = Math.max(...pages.map(p => p.id), 1) + 1;
