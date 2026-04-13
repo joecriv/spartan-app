@@ -7340,7 +7340,7 @@ function generateProposal() {
     doc.text('All prices include GST (5%) and QST (9.975%).', ML, y, {maxWidth:CW});
     y += 12;
 
-    const fname = `IN-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Proposal_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
+    const fname = `SI-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Proposal_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
     doc.save(fname);
 }
 
@@ -8003,7 +8003,7 @@ async function exportLayoutPDF() {
     }
 
     // ── Save ─────────────────────────────────────────────────
-    const fname = `IN-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Layout_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
+    const fname = `SI-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Layout_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
     doc.save(fname);
 }
 
@@ -8984,7 +8984,7 @@ async function kitExportPDF() {
     const maxH = PH - FOOTER_H - y - 20;
     const sc2 = Math.min(CW / offW, maxH / offH);
     doc.addImage(imgData, 'JPEG', ML + (CW - offW * sc2) / 2, y, offW * sc2, offH * sc2);
-    const fname = `IN-${(formData.order || '000').replace(/[^a-zA-Z0-9_-]/g, '-')}_Kitchen_${(formData.client || 'Client').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '')}.pdf`;
+    const fname = `SI-${(formData.order || '000').replace(/[^a-zA-Z0-9_-]/g, '-')}_Kitchen_${(formData.client || 'Client').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '')}.pdf`;
     doc.save(fname);
 }
 
