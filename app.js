@@ -2341,12 +2341,18 @@ function drawShape(s, sel) {
 // ─────────────────────────────────────────────────────────────
 function drawJointLines(s) {
     if (!s.joints || s.joints.length === 0) return;
+    // Polygon used for point-in-shape tests when deciding which side of a
+    // snapped corner is inside the shape.
+    const polyForTest = (s.shapeType === 'l') ? lShapePolygon(s)
+                      : (s.shapeType === 'u') ? uShapePolygon(s)
+                      : (s.shapeType === 'bsp') ? bspPolygon(s)
+                      : [[s.x, s.y], [s.x+s.w, s.y], [s.x+s.w, s.y+s.h], [s.x, s.y+s.h]];
     for (const j of s.joints) {
         const isSel = selectedJoint?.j === j;
         ctx.save();
         // Clip joint lines to the actual shape boundary
         if (s.shapeType === 'l' || s.shapeType === 'u' || s.shapeType === 'bsp') {
-            const pts = s.shapeType === 'l' ? lShapePolygon(s) : s.shapeType === 'u' ? uShapePolygon(s) : bspPolygon(s);
+            const pts = polyForTest;
             ctx.beginPath();
             ctx.moveTo(pts[0][0], pts[0][1]);
             for (let i=1; i<pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
@@ -2362,31 +2368,65 @@ function drawJointLines(s) {
 
         if (j.axis === 'v') {
             const jx = s.x + clamp(j.pos, 2, s.w - 2);
-            ctx.beginPath(); ctx.moveTo(jx, s.y + 2); ctx.lineTo(jx, s.y + s.h - 2); ctx.stroke();
+            // Default endpoints span the bounding box; a snapped joint is
+            // anchored at the corner and extends only into the shape so the
+            // wall + joint read as one continuous line (two perfect rectangles
+            // on either side of the cut).
+            let y1 = s.y + 2, y2 = s.y + s.h - 2;
+            if (j.snap) {
+                const cy = s.y + j.snap.relY;
+                // Probe all four quadrants around the corner, OFF the joint
+                // axis, to avoid polygon-boundary ambiguity at x=jx.
+                const t = 3;
+                const upL = pointInPolygon(jx - t, cy - t, polyForTest);
+                const upR = pointInPolygon(jx + t, cy - t, polyForTest);
+                const dnL = pointInPolygon(jx - t, cy + t, polyForTest);
+                const dnR = pointInPolygon(jx + t, cy + t, polyForTest);
+                const upBoth = upL && upR;
+                const dnBoth = dnL && dnR;
+                if (dnBoth && !upBoth) y1 = cy;         // continuation runs DOWN from corner
+                else if (upBoth && !dnBoth) y2 = cy;    // continuation runs UP from corner
+            }
+            ctx.beginPath(); ctx.moveTo(jx, y1); ctx.lineTo(jx, y2); ctx.stroke();
             ctx.setLineDash([]);
-            // Label
+            // Label — placed just inside the visible segment's top end
             ctx.font = 'bold 8px Raleway,sans-serif';
             ctx.textAlign = 'center'; ctx.textBaseline = 'top';
             ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-            ctx.strokeText('JT', jx, s.y + 4);
-            ctx.fillStyle = '#e0457b'; ctx.fillText('JT', jx, s.y + 4);
-            // Selection dot
+            const labelY = y1 + 2;
+            ctx.strokeText('JT', jx, labelY);
+            ctx.fillStyle = '#e0457b'; ctx.fillText('JT', jx, labelY);
+            // Selection dot — midpoint of visible segment
             if (isSel) {
-                ctx.beginPath(); ctx.arc(jx, s.y + s.h/2, 5, 0, Math.PI*2);
+                ctx.beginPath(); ctx.arc(jx, (y1 + y2)/2, 5, 0, Math.PI*2);
                 ctx.fillStyle = '#e0457b'; ctx.fill();
                 ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
             }
         } else {
             const jy = s.y + clamp(j.pos, 2, s.h - 2);
-            ctx.beginPath(); ctx.moveTo(s.x + 2, jy); ctx.lineTo(s.x + s.w - 2, jy); ctx.stroke();
+            let x1 = s.x + 2, x2 = s.x + s.w - 2;
+            if (j.snap) {
+                const cx = s.x + j.snap.relX;
+                const t = 3;
+                const upL = pointInPolygon(cx - t, jy - t, polyForTest);
+                const upR = pointInPolygon(cx + t, jy - t, polyForTest);
+                const dnL = pointInPolygon(cx - t, jy + t, polyForTest);
+                const dnR = pointInPolygon(cx + t, jy + t, polyForTest);
+                const leftBoth  = upL && dnL;
+                const rightBoth = upR && dnR;
+                if (rightBoth && !leftBoth) x1 = cx;       // continuation runs RIGHT from corner
+                else if (leftBoth && !rightBoth) x2 = cx;  // continuation runs LEFT from corner
+            }
+            ctx.beginPath(); ctx.moveTo(x1, jy); ctx.lineTo(x2, jy); ctx.stroke();
             ctx.setLineDash([]);
             ctx.font = 'bold 8px Raleway,sans-serif';
             ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
             ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-            ctx.strokeText('JT', s.x + 5, jy - 2);
-            ctx.fillStyle = '#e0457b'; ctx.fillText('JT', s.x + 5, jy - 2);
+            const labelX = x1 + 3;
+            ctx.strokeText('JT', labelX, jy - 2);
+            ctx.fillStyle = '#e0457b'; ctx.fillText('JT', labelX, jy - 2);
             if (isSel) {
-                ctx.beginPath(); ctx.arc(s.x + s.w/2, jy, 5, 0, Math.PI*2);
+                ctx.beginPath(); ctx.arc((x1 + x2)/2, jy, 5, 0, Math.PI*2);
                 ctx.fillStyle = '#e0457b'; ctx.fill();
                 ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
             }
@@ -2543,6 +2583,32 @@ function render() {
     drawMeasurements();
     drawProfileDiags();
     drawChamferPickUI();
+    // When the joint tool is active, pulse gold dots on every inside corner
+    // of every shape so the user knows exactly where joints can be placed.
+    if (tool === 'joint') {
+        ctx.save();
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            const corners = getInsideCornersForJoint(s);
+            for (const c of corners) {
+                // Halo
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, 12, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(176,144,48,0.35)';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+                // Solid dot
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#b09030';
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+            }
+        }
+        ctx.restore();
+    }
     // Joint-snap indicator: gold dot + halo when a joint drag is locked to an inside corner
     if (jointSnapCorner) {
         ctx.save();
@@ -3081,15 +3147,32 @@ function showJointPopup(shape, pos, cvX, cvY) {
 function confirmJointPopup() {
     if (!pendingJointShape || !pendingJointPos) return;
     const s = pendingJointShape, pos = pendingJointPos;
+    // Snap to nearest inside corner on placement so the joint can read as a
+    // continuation of the wall at that corner.
+    const SNAP_THRESH = 10;
+    let snapCorner = null;
+    {
+        const corners = getInsideCornersForJoint(s);
+        let best = SNAP_THRESH;
+        for (const c of corners) {
+            const d = jointOrientation === 'v' ? Math.abs(pos.px - c.x) : Math.abs(pos.py - c.y);
+            if (d < best) { best = d; snapCorner = c; }
+        }
+    }
     let jpos;
-    if (jointOrientation === 'v') {
+    if (snapCorner) {
+        jpos = jointOrientation === 'v' ? (snapCorner.x - s.x) : (snapCorner.y - s.y);
+        jpos = clamp(jpos, INCH*2, jointOrientation === 'v' ? s.w - INCH*2 : s.h - INCH*2);
+    } else if (jointOrientation === 'v') {
         jpos = clamp(snap(pos.px - s.x), INCH*2, s.w - INCH*2);
     } else {
         jpos = clamp(snap(pos.py - s.y), INCH*2, s.h - INCH*2);
     }
     pushUndo();
     if (!s.joints) s.joints = [];
-    s.joints.push({ id: Date.now(), axis: jointOrientation, pos: jpos });
+    const newJoint = { id: Date.now(), axis: jointOrientation, pos: jpos };
+    if (snapCorner) newJoint.snap = { relX: snapCorner.x - s.x, relY: snapCorner.y - s.y };
+    s.joints.push(newJoint);
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('joint-ok').addEventListener('click', confirmJointPopup);
@@ -3892,10 +3975,25 @@ cv.addEventListener('mousedown', e => {
             selectedJoint = jh; draggingJoint = true; draggingJointRef = jh;
             pushUndo(); render(); return;
         }
-        // Add new joint
-        const hit = hitShape(p.x, p.y);
-        if (hit) {
-            showJointPopup(hit, { px: p.x, py: p.y }, p.x, p.y);
+        // New joints MUST snap to an inside corner — a joint is a wall
+        // continuation that extends the existing polygon edge across the
+        // shape to create rectangular sub-pieces.
+        const CORNER_SNAP_PX = 40;
+        let bestShape = null, bestCorner = null, bestDist = CORNER_SNAP_PX;
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            const corners = getInsideCornersForJoint(s);
+            for (const c of corners) {
+                const d = Math.hypot(p.x - c.x, p.y - c.y);
+                if (d < bestDist) { bestDist = d; bestShape = s; bestCorner = c; }
+            }
+        }
+        if (bestShape && bestCorner) {
+            showJointPopup(bestShape, { px: bestCorner.x, py: bestCorner.y }, bestCorner.x, bestCorner.y);
+        } else {
+            // No corner in range — joint placement is corner-only now.
+            // Briefly flash a hint via render().
+            render();
         }
         return;
     }
@@ -4050,10 +4148,15 @@ cv.addEventListener('mousemove', e => {
         }
         if (snapped) {
             j.pos = snapped.relPos;
+            // Store the corner as shape-relative so the joint follows the shape,
+            // and so drawJointLines can anchor the joint at the corner to form
+            // a continuous line with the wall that ends at the corner.
+            j.snap = { relX: snapped.corner.x - s.x, relY: snapped.corner.y - s.y };
             jointSnapCorner = snapped.corner;
         } else {
             if (j.axis === 'v') j.pos = clamp(snap(p.x - s.x), INCH, s.w - INCH);
             else                j.pos = clamp(snap(p.y - s.y), INCH, s.h - INCH);
+            delete j.snap;
             jointSnapCorner = null;
         }
         render(); return;
@@ -4120,7 +4223,19 @@ cv.addEventListener('mousemove', e => {
     }
     if (tool === 'joint') {
         const jh = hitJoint(p.x, p.y);
-        cv.style.cursor = jh ? 'ew-resize' : (hitShape(p.x,p.y) ? 'crosshair' : 'default'); return;
+        if (jh) { cv.style.cursor = 'ew-resize'; return; }
+        // Crosshair only when within snap range of an inside corner
+        const CORNER_SNAP_PX = 40;
+        let near = false;
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            for (const c of getInsideCornersForJoint(s)) {
+                if (Math.hypot(p.x - c.x, p.y - c.y) < CORNER_SNAP_PX) { near = true; break; }
+            }
+            if (near) break;
+        }
+        cv.style.cursor = near ? 'crosshair' : 'not-allowed';
+        return;
     }
     if (tool === 'select') {
         if (hitJoint(p.x, p.y)) { cv.style.cursor = 'ew-resize'; return; }
@@ -5863,7 +5978,7 @@ function switchPanelTab(active) {
     const ep = document.getElementById('edge-palette');
     if (tb) tb.style.display = active === 'slab' ? 'none' : '';
     if (ep) ep.style.display = active === 'slab' ? 'none' : (tool === 'edge' ? 'flex' : 'none');
-    if (active === 'slab') { syncPageOut(); slabRefreshSlabList(); slabRefreshPieceList(); slabRender(); }
+    if (active === 'slab') { syncPageOut(); slabSyncPlacedRefs(); slabRefreshSlabList(); slabRefreshPieceList(); slabRender(); }
     if (active === 'registry') { regRefresh(); }
 }
 document.getElementById('ptab-layout').addEventListener('click',  () => switchPanelTab('layout'));
@@ -6396,6 +6511,93 @@ function slabPieceInDeadZone(slabIdx, x, y, w, h, ref, rotation) {
     return x < 0 || y < 0 || x + w > usableW || y + h > usableH;
 }
 
+// Decompose an axis-aligned shape into non-overlapping rectangles in shape-local
+// inches. Returns null for shapes that can't be cleanly decomposed (chamfered,
+// rounded, circle, farmSink present, etc.) — those still go through the
+// Sutherland-Hodgman fallback in slabAllPieces.
+function shapeLocalRects(s) {
+    const st = s.shapeType || 'rect';
+    const wi = s.w / INCH, hi = s.h / INCH;
+
+    const r  = shapeRadii(s), ch = shapeChamfers(s);
+    const hasChamfer = ch.nw || ch.ne || ch.se || ch.sw;
+    const hasRadius  = r.nw  || r.ne  || r.se  || r.sw;
+    if (hasChamfer || hasRadius) return null;
+    if (s.farmSink) return null;
+    if (st === 'circle') return null;
+
+    if (st === 'rect' || !st) return [{ x: 0, y: 0, w: wi, h: hi }];
+
+    if (st === 'l') {
+        const nW = (s.notchW || 0) / INCH, nH = (s.notchH || 0) / INCH;
+        const corner = s.notchCorner || 'ne';
+        switch (corner) {
+            case 'ne': return [
+                { x: 0,       y: 0,  w: wi - nW, h: hi },
+                { x: wi - nW, y: nH, w: nW,      h: hi - nH },
+            ];
+            case 'nw': return [
+                { x: nW,      y: 0,  w: wi - nW, h: hi },
+                { x: 0,       y: nH, w: nW,      h: hi - nH },
+            ];
+            case 'se': return [
+                { x: 0,       y: 0,  w: wi - nW, h: hi },
+                { x: wi - nW, y: 0,  w: nW,      h: hi - nH },
+            ];
+            case 'sw': return [
+                { x: nW,      y: 0,  w: wi - nW, h: hi },
+                { x: 0,       y: 0,  w: nW,      h: hi - nH },
+            ];
+        }
+    }
+
+    if (st === 'u') {
+        const op = s.uOpening || 'top';
+        const isVert = (op === 'top' || op === 'bottom');
+        const A = isVert ? wi : hi;
+        const H = isVert ? hi : wi;
+        const lH = (s.leftH  ?? s.h) / INCH;
+        const rH = (s.rightH ?? s.h) / INCH;
+        const lW = (s.leftW  || 0)   / INCH;
+        const rW = (s.rightW || 0)   / INCH;
+        let fH;
+        if (s.floorH != null)        fH = s.floorH   / INCH;
+        else if (s.channelH != null) fH = H - s.channelH / INCH;
+        else                          fH = 0;
+
+        const floorY     = H - fH;
+        const leftTopY   = H - lH;
+        const rightTopY  = H - rH;
+
+        // Canonical 'top' opening rects in (A, H) coords
+        const canonical = [
+            { x: 0,        y: leftTopY,  w: lW, h: lH },  // left arm
+            { x: 0,        y: floorY,    w: A,  h: fH },  // bottom floor
+            { x: A - rW,   y: rightTopY, w: rW, h: rH },  // right arm
+        ].filter(rc => rc.w > 0 && rc.h > 0);
+
+        const transform = p => {
+            if (op === 'top')    return p;
+            if (op === 'bottom') return { x: A - p.x - p.w, y: H - p.y - p.h, w: p.w, h: p.h };
+            if (op === 'right')  return { x: H - p.y - p.h, y: p.x,           w: p.h, h: p.w };
+            if (op === 'left')   return { x: p.y,           y: A - p.x - p.w, w: p.h, h: p.w };
+            return p;
+        };
+        return canonical.map(transform);
+    }
+
+    if (st === 'bsp') {
+        const pX = (s.pX !== undefined ? s.pX : Math.round((s.w - s.pW) / 2)) / INCH;
+        const pW = s.pW / INCH, pH = s.pH / INCH;
+        return [
+            { x: pX, y: 0,  w: pW, h: pH },         // protrusion
+            { x: 0,  y: pH, w: wi, h: hi - pH },    // main body
+        ].filter(rc => rc.w > 0 && rc.h > 0);
+    }
+
+    return null;
+}
+
 function slabAllPieces() {
     // Returns piece entries for all placeable shapes/segments in the quote.
     // Shapes with joints are split into individual segment entries.
@@ -6426,6 +6628,41 @@ function slabAllPieces() {
             const hCuts = hJoints.length > 0 ? [0, ...hJoints, hi] : [0, hi];
             let segCount = 0;
 
+            // ── Rect-decomposition clipping ──────────────────────────
+            // For axis-aligned shapes, decompose into rectangles first, then
+            // intersect each rect with each joint grid cell. Guarantees clean
+            // rectangular pieces — avoids the Sutherland-Hodgman boundary
+            // degeneracy that produced sliver pieces when the joint aligned
+            // with an inside corner (e.g. L-shape notch).
+            const decompRects = shapeLocalRects(s);
+            if (decompRects) {
+                for (let vi = 0; vi < vCuts.length - 1; vi++) {
+                    for (let hj = 0; hj < hCuts.length - 1; hj++) {
+                        for (const rc of decompRects) {
+                            const xLo = Math.max(rc.x,          vCuts[vi]);
+                            const xHi = Math.min(rc.x + rc.w,   vCuts[vi+1]);
+                            const yLo = Math.max(rc.y,          hCuts[hj]);
+                            const yHi = Math.min(rc.y + rc.h,   hCuts[hj+1]);
+                            const w = xHi - xLo, h = yHi - yLo;
+                            if (w <= 1e-4 || h <= 1e-4) continue;
+                            out.push({
+                                pageIdx: pi, shapeIdx: si,
+                                label: `${baseLabel}-${SEG_LETTERS[segCount]||segCount+1}`,
+                                pageLabel,
+                                wi: +w.toFixed(6), hi: +h.toFixed(6),
+                                shapeType: 'rect', segIdx: segCount,
+                                segOffset: { fromX: xLo, fromY: yLo, toX: xHi, toY: yHi },
+                                segPoly: null
+                            });
+                            segCount++;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // ── Fallback: Sutherland-Hodgman for shapes we can't decompose
+            //    (chamfered, rounded, circle, farmSink, etc.)
             for (let vi = 0; vi < vCuts.length - 1; vi++) {
                 for (let hj = 0; hj < hCuts.length - 1; hj++) {
                     const xLo = vCuts[vi], xHi = vCuts[vi+1];
@@ -6458,8 +6695,32 @@ function slabAllPieces() {
     return out;
 }
 
+// Replace each placed piece's stored ref with the current definition from
+// slabAllPieces(). Called whenever the slab panel is activated or the piece
+// list is refreshed, so placed pieces always reflect the latest joint/shape
+// state (fixes stale segPoly/wi/hi from older placements).
+function slabSyncPlacedRefs() {
+    const pieces = slabAllPieces();
+    let changed = false;
+    for (const pl of slabPlaced) {
+        if (!pl.ref) continue;
+        const match = pieces.find(p =>
+            p.pageIdx  === pl.ref.pageIdx  &&
+            p.shapeIdx === pl.ref.shapeIdx &&
+            ((p.segIdx == null && pl.ref.segIdx == null) ||
+             p.segIdx === pl.ref.segIdx)
+        );
+        if (match) {
+            pl.ref = { ...match };
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 // ── slab panel UI refresh ─────────────────────────────────────────────
 function slabRefreshPieceList() {
+    slabSyncPlacedRefs();
     const div = document.getElementById('slab-piece-list');
     if (!div) return;
     const pieces = slabAllPieces();
@@ -7800,12 +8061,30 @@ function generateProposal() {
     // Collect per-page pricing for the final summary
     const pageOptionsByPage = []; // array of po objects
 
+    // Project-level fees (install + measurements + polissage) are allocated into
+    // each page proportionally by sqft so they appear up-front in the room breakdown.
+    const projectFees    = calcProjectFees();
+    const projectTotSqft = pages.reduce((s, p) => s + calcPageSqft(p), 0);
+    function feeShareForPage(roomSqft) {
+        if (projectTotSqft <= 0 || roomSqft <= 0) return { install: 0, meas: 0, pol: 0, total: 0 };
+        const r = roomSqft / projectTotSqft;
+        const install = projectFees.installCost * r;
+        const meas    = projectFees.measCost    * r;
+        const pol     = projectFees.polCost     * r;
+        return { install, meas, pol, total: install + meas + pol };
+    }
+
     for (let pi=0; pi<pages.length; pi++) {
         const page = pages[pi];
         currentPageIdx = pi; syncPageIn(); render();
 
         const { dataURL: imgData, w: natW, h: natH } = croppedCanvasData(page);
         const po = calcPageOptions(page);
+        // Allocate project-level fees into this page and roll them into every subtotal
+        const feeShare = feeShareForPage(po.roomSqft);
+        po.feeShare   = feeShare;
+        po.servicesCost += feeShare.total;
+        for (const opt of po.options) opt.optionSubtotal += feeShare.total;
         pageOptionsByPage.push(po);
         const { roomSqft, edgeFootage, sinks, options } = po;
         const contentH = panelContentH(po);
@@ -7880,7 +8159,11 @@ function generateProposal() {
             doc.line(px+5, py2, px+pw-5, py2); py2 += 7;
         }
 
-        // ── Sink / cooktop services (counts, shared) ──
+        // ── Sink / cooktop services (shared across options) ──
+        // Installation / measurements / polissage are NOT itemized here — they are
+        // rolled silently into each option's pre-tax subtotal (see po.servicesCost
+        // += feeShare.total above). The subtotal label calls this out so the
+        // client knows install + measurements are already included.
         const serviceRows = [];
         if (sinks.overmount  > 0) serviceRows.push(['Évier overmount',  sinks.overmount]);
         if (sinks.undermount > 0) serviceRows.push(['Évier undermount', sinks.undermount]);
@@ -7903,6 +8186,9 @@ function generateProposal() {
         }
 
         // ── Per-option price blocks ──
+        // Note: po.servicesCost and opt.optionSubtotal already include each page's
+        // sqft-proportional share of install / measurements / polissage.
+        const hasFees = (po.feeShare && po.feeShare.total > 0);
         if (options.length === 0) {
             if (po.servicesCost > 0) {
                 doc.setFillColor(...ACCENT);
@@ -7910,7 +8196,7 @@ function generateProposal() {
                 doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
                 doc.text('SOUS-TOTAL', px+7, py2+9);
                 doc.setFont('helvetica','italic'); doc.setFontSize(5.5); doc.setTextColor(...BRAND);
-                doc.text('services only', px+7, py2+16);
+                doc.text(hasFees ? 'incl. install + mesures' : 'services only', px+7, py2+16);
                 doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
                 doc.text(fmt$(po.servicesCost), px+pw-7, py2+14, {align:'right'});
                 py2 += 26;
@@ -7938,7 +8224,7 @@ function generateProposal() {
                 doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BODY_T);
                 doc.text(fmt$(opt.matCost + opt.cutCost), px+pw-5, py2, {align:'right'});
                 py2 += 10;
-                // Services
+                // Services (sinks + allocated install/measurements/polissage)
                 if (po.servicesCost > 0) {
                     doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(60,50,20);
                     doc.text('Services', px+5, py2);
@@ -7952,7 +8238,7 @@ function generateProposal() {
                 doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
                 doc.text(options.length > 1 ? `OPT ${i+1} SOUS-TOTAL` : 'SOUS-TOTAL', px+7, py2+9);
                 doc.setFont('helvetica','italic'); doc.setFontSize(5.5); doc.setTextColor(...BRAND);
-                doc.text('subtotal (before tax)', px+7, py2+16);
+                doc.text(hasFees ? 'pre-tax · incl. install + mesures' : 'subtotal (before tax)', px+7, py2+16);
                 doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...BRAND);
                 doc.text(fmt$(opt.optionSubtotal), px+pw-7, py2+14, {align:'right'});
                 py2 += 26;
@@ -7977,53 +8263,11 @@ function generateProposal() {
 
     if (!hasWholeProjectOptions && pagesWithShapes.length > 0) {
         const TAX = 1.14975;
-        const fees = calcProjectFees();
 
         // Force summary onto a clean page so it always reads as the conclusion
         newPdfPage();
         y = 90;
         sectionHead(anyMulti ? 'SOMMAIRE — COMBINAISONS POSSIBLES / POSSIBLE COMBINATIONS' : 'SOMMAIRE DU PROJET / PROJECT SUMMARY');
-
-        // Fees section (shared across all combinations)
-        if (fees.installCost > 0 || fees.measCost > 0 || fees.polCost > 0) {
-            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BRAND);
-            doc.text('FRAIS DE PROJET / PROJECT FEES — shared', ML + 6, y);
-            y += 11;
-            doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-            if (fees.installCost > 0) {
-                checkY(13);
-                const lbl = fees.installCustomUsed
-                    ? `Installation (custom price)`
-                    : fees.installMinApplied
-                    ? `Installation (${fees.totalSqft.toFixed(1)} sqft — minimum applied)`
-                    : `Installation (${fees.totalSqft.toFixed(1)} sqft × ${fmt$(fees.installRate)})`;
-                doc.text(lbl, ML + 6, y);
-                doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-                doc.text(fmt$(fees.installCost), PW - MR - 6, y, {align:'right'});
-                doc.setFont('helvetica','normal');
-                y += 13;
-            }
-            if (fees.measCost > 0) {
-                checkY(13);
-                doc.text('Measurements (flat fee)', ML + 6, y);
-                doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-                doc.text(fmt$(fees.measCost), PW - MR - 6, y, {align:'right'});
-                doc.setFont('helvetica','normal');
-                y += 13;
-            }
-            if (fees.polCost > 0) {
-                checkY(13);
-                doc.text(`Polissage sous morceau × ${fees.polQty}`, ML + 6, y);
-                doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...BODY_T);
-                doc.text(fmt$(fees.polCost), PW - MR - 6, y, {align:'right'});
-                doc.setFont('helvetica','normal');
-                y += 13;
-            }
-            y += 2;
-            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
-            doc.line(ML, y, PW - MR, y);
-            y += 11;
-        }
 
         // Build cross-product of per-page options
         let combos = [[]];
@@ -8046,7 +8290,7 @@ function generateProposal() {
 
         // Render each combination as a bordered card
         combos.forEach((combo, ci) => {
-            const cardH = 30 + combo.length * 12 + 32; // header + rows + total
+            const cardH = 30 + combo.length * 12 + 28; // header + rows + total (fees are baked into page subtotals)
             if (y + cardH > PH - FOOTER_H - 10) newPdfPage();
             const cy = y;
 
@@ -8061,7 +8305,8 @@ function generateProposal() {
             doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(255,255,255);
             doc.text(anyMulti ? `COMBINAISON ${ci+1} / COMBINATION ${ci+1}` : 'SOMMAIRE / SUMMARY', ML + 10, cy + 12);
 
-            // Combo rows
+            // Combo rows — each page subtotal already includes its share of
+            // install / measurements / polissage (allocated by sqft).
             let ry = cy + 30;
             let matSum = 0;
             for (const pick of combo) {
@@ -8082,20 +8327,16 @@ function generateProposal() {
                 ry += 12;
             }
 
-            // Fees + totals line
-            const preT = matSum + fees.total;
+            // Pre-tax totals line
+            const preT = matSum;
             const withTax = preT * TAX;
             ry += 2;
             doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
             doc.line(ML + 10, ry, ML + CW - 10, ry);
             ry += 6;
-            if (fees.total > 0) {
-                doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(100,85,40);
-                doc.text(`+ Frais de projet / Project fees  (${fmt$(fees.total)})`, ML + 10, ry);
-                doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
-                doc.text(`Avant taxes: ${fmt$(preT)}`, ML + CW - 10, ry, {align:'right'});
-                ry += 10;
-            }
+            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
+            doc.text(`Avant taxes: ${fmt$(preT)}`, ML + CW - 10, ry, {align:'right'});
+            ry += 10;
 
             // Total (highlighted)
             doc.setFillColor(...ACCENT);
