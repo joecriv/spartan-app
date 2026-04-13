@@ -5477,14 +5477,20 @@ function renderPricingPanel() {
 
     // ── Grand total of committed costs (pages + services) ──
     const committedTotal = materialCostTotal + serviceCostTotal;
+    const TAX = 1.14975;
+    const committedWithTax = committedTotal * TAX;
     let committedLabel;
     if (optionsGrp.length > 0) committedLabel = 'Committed subtotal (shared)';
-    else if (anyMultiOptionPage)  committedLabel = 'Grand Total — reference (using Option 1 of each multi-option page)';
+    else if (anyMultiOptionPage)  committedLabel = 'Reference total — using Option 1 of each multi-option page';
     else                           committedLabel = 'Grand Total';
     sumHtml += `<div class="room-pricing-section" style="margin-top:8px;padding:8px;background:#2d3a10;border:1px solid #b09030;border-radius:6px">
-        <div class="price-check-row" style="font-weight:bold;font-size:14px">
-            <span class="price-check-name">${committedLabel}</span>
+        <div class="price-check-row" style="font-weight:bold;font-size:13px">
+            <span class="price-check-name">${committedLabel} (pre-tax)</span>
             <span class="price-check-val">${fmt$(committedTotal)}</span>
+        </div>
+        <div class="price-check-row" style="font-weight:bold;font-size:14px;color:#b09030;border-top:1px solid #555;margin-top:4px;padding-top:4px">
+            <span class="price-check-name">With taxes (GST 5% + QST 9.975%)</span>
+            <span class="price-check-val">${fmt$(committedWithTax)}</span>
         </div>
     </div>`;
 
@@ -5519,7 +5525,9 @@ function renderPricingPanel() {
                 const optLabel = n > 1 ? ` · Option ${c.blockIdx+1}` : '';
                 return { name: `${c.page.name}${optLabel} (${matName})`, cost: c.block.matSubtotal };
             });
-            const total = matSum + serviceCostTotal;
+            const preT = matSum + serviceCostTotal;
+            const TAX = 1.14975; // GST 5% + QST 9.975% (same as PDF)
+            const withTax = preT * TAX;
             combosHtml += `<div style="margin-bottom:8px;padding:8px;background:#141414;border:1px solid #333;border-radius:4px">
                 <div style="font-size:11px;font-weight:700;color:#b09030;margin-bottom:4px">Combination ${ci+1}</div>
                 ${picks.map(p => `<div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;padding:2px 0">
@@ -5530,10 +5538,15 @@ function renderPricingPanel() {
                     <span>Project services (shared)</span>
                     <span>${fmt$(serviceCostTotal)}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:#b09030;padding:5px 6px;border-top:1px solid #b09030;margin-top:3px;background:#2d3a10;border-radius:3px">
-                    <span>TOTAL — Combo ${ci+1}</span>
-                    <span>${fmt$(total)}</span>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;padding:3px 6px;border-top:1px solid #333;margin-top:3px">
+                    <span>Pre-tax subtotal</span>
+                    <span style="font-weight:700">${fmt$(preT)}</span>
                 </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:#b09030;padding:5px 6px;border-top:1px solid #b09030;margin-top:1px;background:#2d3a10;border-radius:3px">
+                    <span>TOTAL with taxes — Combo ${ci+1}</span>
+                    <span>${fmt$(withTax)}</span>
+                </div>
+                <div style="font-size:8.5px;color:#777;text-align:right;margin-top:2px;font-style:italic">GST 5% + QST 9.975% — matches client proposal PDF</div>
             </div>`;
         });
         combosHtml += '</div>';
