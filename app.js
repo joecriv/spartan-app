@@ -266,6 +266,7 @@ let chamferPickState = null; // { s, key, step:1|2, edgeA, edgeB, pt1, pt1Edge, 
 let selectedJoint = null;    // { s, j }
 let draggingJoint = false;
 let draggingJointRef = null; // { s, j }
+let jointSnapCorner = null;  // { x, y } in canvas coords while a joint drag is snapped to an inside corner
 
 // ─────────────────────────────────────────────────────────────
 //  Canvas refs
@@ -1138,6 +1139,79 @@ function nearestCornerForEdge(mx, my) {
         }
     }
     return null;
+}
+
+// Returns inside (reflex/concave) corners in canvas coords for a shape.
+// Plus: corners of adjacent rectangles that land on this shape's boundary
+// (common in multi-piece layouts where two rectangles meet to form an L).
+function getInsideCornersForJoint(s) {
+    const out = [];
+
+    // 1. Reflex vertices of the shape's own polygon (L-shape notch, U-shape channel)
+    let poly = null;
+    if (s.shapeType === 'l')      poly = lShapePolygon(s);
+    else if (s.shapeType === 'u') poly = uShapePolygon(s);
+    else if (s.shapeType === 'bsp') poly = bspPolygon(s);
+    if (poly && poly.length >= 4) {
+        const n = poly.length;
+        let totalCross = 0;
+        for (let i = 0; i < n; i++) {
+            const a = poly[i], b = poly[(i+1)%n], c = poly[(i+2)%n];
+            totalCross += (b[0]-a[0])*(c[1]-b[1]) - (b[1]-a[1])*(c[0]-b[0]);
+        }
+        const pos = totalCross > 0;
+        for (let i = 0; i < n; i++) {
+            const a = poly[i], b = poly[(i+1)%n], c = poly[(i+2)%n];
+            const cross = (b[0]-a[0])*(c[1]-b[1]) - (b[1]-a[1])*(c[0]-b[0]);
+            if ((pos && cross < 0) || (!pos && cross > 0)) {
+                out.push({ x: b[0], y: b[1] });
+            }
+        }
+    }
+
+    // 2. Multi-piece layouts: corners of other rect shapes that land on THIS shape's
+    //    boundary (not at a corner of this shape) — the meeting point of two pieces
+    //    is an inside corner of the combined outline.
+    const EPS = 0.5;
+    const onSegBetween = (px, py, x1, y1, x2, y2) => {
+        // Axis-aligned segments only (rectangle edges)
+        if (Math.abs(x1 - x2) < EPS) {
+            // vertical segment
+            if (Math.abs(px - x1) > EPS) return false;
+            return py > Math.min(y1, y2) + EPS && py < Math.max(y1, y2) - EPS;
+        }
+        if (Math.abs(y1 - y2) < EPS) {
+            // horizontal segment
+            if (Math.abs(py - y1) > EPS) return false;
+            return px > Math.min(x1, x2) + EPS && px < Math.max(x1, x2) - EPS;
+        }
+        return false;
+    };
+    const sEdges = (s.shapeType === 'rect' || !s.shapeType)
+        ? [[s.x, s.y, s.x+s.w, s.y], [s.x+s.w, s.y, s.x+s.w, s.y+s.h],
+           [s.x+s.w, s.y+s.h, s.x, s.y+s.h], [s.x, s.y+s.h, s.x, s.y]]
+        : null;
+    if (sEdges) {
+        for (const other of shapes) {
+            if (other === s || other.subtype) continue;
+            if (other.shapeType !== 'rect' && other.shapeType) continue;
+            const corners = [
+                [other.x,           other.y],
+                [other.x + other.w, other.y],
+                [other.x + other.w, other.y + other.h],
+                [other.x,           other.y + other.h],
+            ];
+            for (const [cx, cy] of corners) {
+                for (const [x1, y1, x2, y2] of sEdges) {
+                    if (onSegBetween(cx, cy, x1, y1, x2, y2)) {
+                        out.push({ x: cx, y: cy });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return out;
 }
 
 function hitJoint(mx, my) {
@@ -2469,6 +2543,25 @@ function render() {
     drawMeasurements();
     drawProfileDiags();
     drawChamferPickUI();
+    // Joint-snap indicator: gold dot + halo when a joint drag is locked to an inside corner
+    if (jointSnapCorner) {
+        ctx.save();
+        // Halo
+        ctx.beginPath();
+        ctx.arc(jointSnapCorner.x, jointSnapCorner.y, 10, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(176,144,48,0.35)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        // Solid dot
+        ctx.beginPath();
+        ctx.arc(jointSnapCorner.x, jointSnapCorner.y, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#b09030';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.restore();
+    }
     // Update right-panel live sections
     if (typeof updateLiveLegend === 'function') updateLiveLegend();
 }
@@ -3943,8 +4036,26 @@ cv.addEventListener('mousemove', e => {
 
     if (draggingJoint && draggingJointRef) {
         const { s, j } = draggingJointRef;
-        if (j.axis === 'v') j.pos = clamp(snap(p.x - s.x), INCH, s.w - INCH);
-        else                j.pos = clamp(snap(p.y - s.y), INCH, s.h - INCH);
+        const SNAP_THRESH = 10; // px — magnetic snap zone at inside corners
+        // Find the nearest inside corner along the joint's axis, within threshold
+        const corners = getInsideCornersForJoint(s);
+        let snapped = null;
+        let bestDist = SNAP_THRESH;
+        for (const c of corners) {
+            const relPos = j.axis === 'v' ? (c.x - s.x) : (c.y - s.y);
+            const axisMin = INCH, axisMax = (j.axis === 'v' ? s.w : s.h) - INCH;
+            if (relPos < axisMin || relPos > axisMax) continue;
+            const d = j.axis === 'v' ? Math.abs(p.x - c.x) : Math.abs(p.y - c.y);
+            if (d < bestDist) { bestDist = d; snapped = { corner: c, relPos }; }
+        }
+        if (snapped) {
+            j.pos = snapped.relPos;
+            jointSnapCorner = snapped.corner;
+        } else {
+            if (j.axis === 'v') j.pos = clamp(snap(p.x - s.x), INCH, s.w - INCH);
+            else                j.pos = clamp(snap(p.y - s.y), INCH, s.h - INCH);
+            jointSnapCorner = null;
+        }
         render(); return;
     }
 
@@ -4026,7 +4137,7 @@ cv.addEventListener('mouseup', e => {
     const p = mousePos(e);
 
     if (draggingJoint) {
-        draggingJoint = false; draggingJointRef = null; persist(); return;
+        draggingJoint = false; draggingJointRef = null; jointSnapCorner = null; persist(); render(); return;
     }
 
     if ((tool === 'draw' || tool === 'ldraw' || tool === 'udraw' || tool === 'bsp') && drawing) {
@@ -4166,7 +4277,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         ghostText = null;
         selected = null; selectedJoint = null; drawing = false; dStart = null; dCur = null;
-        moving = false; resizing = false; edgeResizing = null; draggingJoint = false;
+        moving = false; resizing = false; edgeResizing = null; draggingJoint = false; jointSnapCorner = null;
         hovCorner = null; hovEdge = null; hovCornerEdge = null; chamferPickState = null;
         measurePt1 = null; measureHover = null; selectedMeasure = null;
         render(); updateStatus(); return;
@@ -4226,7 +4337,7 @@ function setTool(t) {
     ghostText = null; // cancel any floating text
     measurePt1 = null; measureHover = null;
     tool = t; selected = null; selectedJoint = null; selectedMeasure = null;
-    drawing = false; moving = false; resizing = false; edgeResizing = null; draggingJoint = false;
+    drawing = false; moving = false; resizing = false; edgeResizing = null; draggingJoint = false; jointSnapCorner = null;
     hovCorner = null; hovEdge = null; hovCornerEdge = null;
     selectedText = null;
     cv.style.cursor = ['draw','ldraw','udraw','bsp','circle','sink','farmsink','cooktop','outlet','bocci','radius','edge','splitedge','joint','measure'].includes(t) ? 'crosshair' : 'default';
