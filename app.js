@@ -6313,13 +6313,17 @@ async function loadQuoteFromDb(quoteId) {
     switchPanelTab('layout');
 }
 
-// Refresh the registry list from Supabase
+// Refresh the registry list from Supabase.
+// Fetches BOTH active and soft-deleted rows; client-side filter tab chooses
+// which bucket to display. Requires the deleted_at column from the
+// supabase_migration_soft_delete.sql migration.
 async function regRefresh() {
     if (!currentShopId) return;
-    const { data } = await _sb.from('quotes')
-        .select('id, order_number, job_name, client_name, status, created_by_email, created_at, updated_at')
+    const { data, error } = await _sb.from('quotes')
+        .select('id, order_number, job_name, client_name, status, created_by_email, created_at, updated_at, deleted_at')
         .eq('shop_id', currentShopId)
         .order('updated_at', { ascending: false });
+    if (error) { console.error('regRefresh failed:', error); alert('Failed to load registry: ' + (error.message || error)); return; }
     regQuotes = data || [];
     regRenderList();
 }
@@ -6327,8 +6331,12 @@ async function regRefresh() {
 function regRenderList() {
     const list = document.getElementById('reg-list');
     if (!list) return;
-    let filtered = regQuotes;
-    if (regFilterStatus !== 'all') {
+    const viewingTrash = regFilterStatus === 'trash';
+    // Active view hides deleted rows; Trash view shows ONLY deleted rows.
+    let filtered = viewingTrash
+        ? regQuotes.filter(q => q.deleted_at)
+        : regQuotes.filter(q => !q.deleted_at);
+    if (!viewingTrash && regFilterStatus !== 'all') {
         filtered = filtered.filter(q => q.status === regFilterStatus);
     }
     if (regSearchTerm) {
@@ -6341,14 +6349,24 @@ function regRenderList() {
         );
     }
     if (!filtered.length) {
-        list.innerHTML = `<div style="color:#555;font-size:11px;text-align:center;padding:20px 0">${regQuotes.length ? 'No quotes match your search.' : 'No quotes yet. Create one!'}</div>`;
+        list.innerHTML = `<div style="color:#555;font-size:11px;text-align:center;padding:20px 0">${viewingTrash ? 'Trash is empty.' : (regQuotes.length ? 'No quotes match your search.' : 'No quotes yet. Create one!')}</div>`;
         return;
     }
     list.innerHTML = filtered.map(q => {
         const isActive = q.id === currentQuoteId;
         const date = q.updated_at ? new Date(q.updated_at).toLocaleDateString() : '';
         const rep = (q.created_by_email||'').split('@')[0] || '?';
-        return `<div class="reg-card ${isActive ? 'reg-active' : ''}" data-qid="${q.id}">
+        const inTrash = !!q.deleted_at;
+        const actions = inTrash
+            ? `<button onclick="regRestoreQuote('${q.id}')" title="Restore from trash" style="background:#1f2a0f;color:#b5d070;border:1px solid #3a5020">Restore</button>
+               <span style="flex:1"></span>
+               <span style="color:#888;font-size:9px">deleted ${q.deleted_at ? new Date(q.deleted_at).toLocaleDateString() : ''}</span>`
+            : `<button onclick="loadQuoteFromDb('${q.id}')" title="Load this quote">Load</button>
+               <select onchange="regSetStatus('${q.id}', this.value)" style="font-size:9px;padding:1px 4px;background:#252525;border:1px solid #333;color:#888;border-radius:3px;font-family:'Raleway',sans-serif">
+                   ${['draft','sent','approved','completed','cancelled'].map(s => `<option value="${s}" ${q.status===s?'selected':''}>${s}</option>`).join('')}
+               </select>
+               <button class="reg-del" onclick="regDeleteQuote('${q.id}')" title="Move to trash">✕</button>`;
+        return `<div class="reg-card ${isActive ? 'reg-active' : ''}" data-qid="${q.id}" style="${inTrash?'opacity:0.7':''}">
             <div class="reg-card-top">
                 <span class="reg-card-client">${q.client_name || '(no client)'}</span>
                 <span class="reg-card-order">${q.order_number || ''}</span>
@@ -6358,13 +6376,7 @@ function regRenderList() {
                 <span>${rep} · ${date}</span>
                 <span class="reg-status reg-status-${q.status}">${q.status}</span>
             </div>
-            <div class="reg-card-actions">
-                <button onclick="loadQuoteFromDb('${q.id}')" title="Load this quote">Load</button>
-                <select onchange="regSetStatus('${q.id}', this.value)" style="font-size:9px;padding:1px 4px;background:#252525;border:1px solid #333;color:#888;border-radius:3px;font-family:'Raleway',sans-serif">
-                    ${['draft','sent','approved','completed','cancelled'].map(s => `<option value="${s}" ${q.status===s?'selected':''}>${s}</option>`).join('')}
-                </select>
-                <button class="reg-del" onclick="regDeleteQuote('${q.id}')" title="Delete">✕</button>
-            </div>
+            <div class="reg-card-actions">${actions}</div>
         </div>`;
     }).join('');
 }
@@ -6377,18 +6389,33 @@ async function regSetStatus(quoteId, status) {
     regRenderList();
 }
 
+// Soft delete — flags the row with deleted_at. Row stays in the database
+// and can be restored from the Trash tab. Hard delete is blocked by RLS
+// (see supabase_migration_soft_delete.sql).
 async function regDeleteQuote(quoteId) {
-    // Double-confirm so a misclick doesn't wipe real work.
     const q = regQuotes.find(x => x.id === quoteId);
     const label = q ? `"${q.client_name || q.job_name || q.order_number || '(no name)'}"` : 'this quote';
-    if (!confirm(`Delete ${label} permanently?\n\nThis cannot be undone.`)) return;
-    if (!confirm(`Are you SURE? ${label} will be gone forever.`)) return;
-    const { error } = await _sb.from('quotes').delete().eq('id', quoteId);
-    if (error) { alert('Failed to delete: ' + (error.message || error)); return; }
+    if (!confirm(`Move ${label} to trash?\n\nYou can restore it from the Trash tab.`)) return;
+    const { error } = await _sb.from('quotes')
+        .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', quoteId);
+    if (error) { alert('Failed to move to trash: ' + (error.message || error)); return; }
     if (currentQuoteId === quoteId) { currentQuoteId = null; localStorage.removeItem('spartan_currentQuoteId'); }
-    regQuotes = regQuotes.filter(q => q.id !== quoteId);
+    const rec = regQuotes.find(q => q.id === quoteId);
+    if (rec) rec.deleted_at = new Date().toISOString();
     regRenderList();
     regUpdateCurrentBanner();
+}
+
+// Restore a soft-deleted quote back into the active list.
+async function regRestoreQuote(quoteId) {
+    const { error } = await _sb.from('quotes')
+        .update({ deleted_at: null, updated_at: new Date().toISOString() })
+        .eq('id', quoteId);
+    if (error) { alert('Failed to restore: ' + (error.message || error)); return; }
+    const rec = regQuotes.find(q => q.id === quoteId);
+    if (rec) rec.deleted_at = null;
+    regRenderList();
 }
 
 function regUpdateCurrentBanner() {
