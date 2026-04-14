@@ -29,19 +29,22 @@ async function _syncAllToRemote() {
         const raw = localStorage.getItem(key);
         if (raw) {
             try {
-                await _sb.from('user_data').upsert({
+                const { error } = await _sb.from('user_data').upsert({
                     clerk_user_id: currentUserId,
                     shop_id: currentShopId,
                     storage_key: key,
                     data: JSON.parse(raw),
                     updated_at: new Date().toISOString()
                 }, { onConflict: 'clerk_user_id,storage_key' });
-            } catch (e) { /* non-fatal */ }
+                if (error) console.warn('user_data sync failed for', key, error);
+            } catch (e) { console.warn('user_data sync threw for', key, e); }
         }
     }
-    // Also auto-save to the current quote row if one is open
+    // Also auto-save to the current quote row if one is open.
+    // saveQuoteToDb now surfaces its own error banner + downloads a JSON
+    // backup on failure — no more silent swallow.
     if (currentQuoteId) {
-        try { await saveQuoteToDb(); } catch (e) { /* non-fatal */ }
+        await saveQuoteToDb();
     }
 }
 
@@ -6142,9 +6145,70 @@ let regQuotes = [];         // cached list of quotes from Supabase
 let regFilterStatus = 'all';
 let regSearchTerm = '';
 
-// Save current state as a quote to Supabase
+// Client-side UUID generator — used so every quote has a STABLE id that
+// belongs to the client, not the server. This makes saves idempotent: whether
+// the row exists or not, we always target the same id, and if the row is
+// missing we can recreate it (see saveQuoteToDb below).
+function _uuidv4() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+// ── Save-status indicator (top-right toast) ────────────────────────
+// Shows "Saving…", "Saved 3:42 PM", or "⚠ Save failed — retry" so the user
+// always knows whether their work actually reached the database.
+let _saveStatusEl = null;
+function _ensureSaveStatusEl() {
+    if (_saveStatusEl) return _saveStatusEl;
+    const el = document.createElement('div');
+    el.id = 'save-status-toast';
+    el.style.cssText = 'position:fixed;top:10px;right:14px;z-index:10001;font:600 11px Raleway,sans-serif;padding:6px 10px;border-radius:4px;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.4);display:none;max-width:320px';
+    document.body.appendChild(el);
+    _saveStatusEl = el;
+    return el;
+}
+function setSaveStatus(state, extra) {
+    const el = _ensureSaveStatusEl();
+    el.style.display = '';
+    if (state === 'saving') {
+        el.style.background = '#2a2a2a';
+        el.style.color = '#b09030';
+        el.style.border = '1px solid #b09030';
+        el.innerHTML = '⟳ Saving…';
+    } else if (state === 'saved') {
+        el.style.background = '#1f2a0f';
+        el.style.color = '#b5d070';
+        el.style.border = '1px solid #3a5020';
+        const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        el.innerHTML = `✓ Saved · ${ts}`;
+        setTimeout(() => { if (_saveStatusEl && el.innerHTML.startsWith('✓')) el.style.display = 'none'; }, 4000);
+    } else if (state === 'failed') {
+        el.style.background = '#3a1a1a';
+        el.style.color = '#ff8888';
+        el.style.border = '1px solid #aa3030';
+        const msg = (extra || 'unknown error').toString().slice(0, 120);
+        el.innerHTML = `⚠ Save failed — <span style="text-decoration:underline;cursor:pointer" onclick="saveQuoteToDb().then(r=>{if(r.ok)setSaveStatus('saved')})">retry</span><div style="font-weight:400;font-size:9px;margin-top:3px;color:#faa">${msg}</div>`;
+    } else {
+        el.style.display = 'none';
+    }
+}
+
+// Save current state as a quote to Supabase.
+// Returns { ok: true, id } on success, { ok: false, error } on failure.
+// Strategy:
+//   1. Assign a stable client-generated UUID if none exists.
+//   2. If row with that id is missing from the DB (deleted or never inserted),
+//      insert it. Otherwise update. Every save path is now idempotent and
+//      self-healing — a stale localStorage id won't cause silent data loss.
+//   3. On ANY failure, auto-download a JSON backup so the user never loses
+//      their work even if Supabase is unreachable.
 async function saveQuoteToDb() {
-    if (!currentShopId || !currentUserId) return;
+    if (!currentShopId || !currentUserId) return { ok: false, error: 'Not signed in' };
+    setSaveStatus('saving');
     saveForm();
     syncPageOut();
     const qData = {
@@ -6154,7 +6218,16 @@ async function saveQuoteToDb() {
     };
     const fData = { ...formData };
     const pData = { ...pricingData };
+
+    // Ensure we have a stable id. If this is a brand-new quote, mint one
+    // locally and persist it so every subsequent save targets the same row.
+    if (!currentQuoteId) {
+        currentQuoteId = _uuidv4();
+        localStorage.setItem('spartan_currentQuoteId', currentQuoteId);
+    }
+
     const row = {
+        id: currentQuoteId,
         shop_id: currentShopId,
         created_by: currentUserId,
         created_by_email: currentUserEmail || '',
@@ -6167,25 +6240,40 @@ async function saveQuoteToDb() {
         pricing_data: pData,
         updated_at: new Date().toISOString()
     };
-    if (currentQuoteId) {
-        // Update existing
-        await _sb.from('quotes').update(row).eq('id', currentQuoteId);
-    } else {
-        // Insert new
+
+    try {
+        // Try UPDATE first. `.select('id')` returns the affected rows so we
+        // can detect the row-not-found case (update with 0 rows affected —
+        // previously silent; now we catch it and re-insert).
+        const upd = await _sb.from('quotes').update(row).eq('id', currentQuoteId).select('id');
+        if (upd.error) throw upd.error;
+        if (upd.data && upd.data.length > 0) {
+            setSaveStatus('saved');
+            regUpdateCurrentBanner();
+            return { ok: true, id: currentQuoteId };
+        }
+        // UPDATE affected 0 rows → row doesn't exist. Insert it.
         row.status = 'draft';
-        const { data } = await _sb.from('quotes').insert(row).select('id').single();
-        if (data) currentQuoteId = data.id;
+        const ins = await _sb.from('quotes').insert(row).select('id').single();
+        if (ins.error) throw ins.error;
+        setSaveStatus('saved');
+        regUpdateCurrentBanner();
+        return { ok: true, id: currentQuoteId, restored: true };
+    } catch (err) {
+        console.error('saveQuoteToDb failed:', err);
+        setSaveStatus('failed', err.message || err.code || String(err));
+        // Emergency local backup so the user's work isn't lost even if every
+        // save to the cloud fails.
+        try { _downloadQuoteJson(); } catch (_) {}
+        return { ok: false, error: err.message || String(err) };
     }
-    // Persist current quote ID so it survives page reload
-    if (currentQuoteId) localStorage.setItem('spartan_currentQuoteId', currentQuoteId);
-    else localStorage.removeItem('spartan_currentQuoteId');
-    regUpdateCurrentBanner();
 }
 
 // Load a quote from Supabase into the app
 async function loadQuoteFromDb(quoteId) {
-    const { data: q } = await _sb.from('quotes').select('*').eq('id', quoteId).single();
-    if (!q) { alert('Quote not found.'); return; }
+    const { data: q, error: loadErr } = await _sb.from('quotes').select('*').eq('id', quoteId).maybeSingle();
+    if (loadErr) { alert('Failed to load quote: ' + (loadErr.message || loadErr)); return; }
+    if (!q) { alert('Quote not found — it may have been deleted.'); return; }
     // Restore quote data
     if (q.quote_data) {
         const d = q.quote_data;
@@ -6282,15 +6370,21 @@ function regRenderList() {
 }
 
 async function regSetStatus(quoteId, status) {
-    await _sb.from('quotes').update({ status, updated_at: new Date().toISOString() }).eq('id', quoteId);
+    const { error } = await _sb.from('quotes').update({ status, updated_at: new Date().toISOString() }).eq('id', quoteId);
+    if (error) { alert('Failed to update status: ' + (error.message || error)); return; }
     const q = regQuotes.find(q => q.id === quoteId);
     if (q) q.status = status;
     regRenderList();
 }
 
 async function regDeleteQuote(quoteId) {
-    if (!confirm('Delete this quote permanently?')) return;
-    await _sb.from('quotes').delete().eq('id', quoteId);
+    // Double-confirm so a misclick doesn't wipe real work.
+    const q = regQuotes.find(x => x.id === quoteId);
+    const label = q ? `"${q.client_name || q.job_name || q.order_number || '(no name)'}"` : 'this quote';
+    if (!confirm(`Delete ${label} permanently?\n\nThis cannot be undone.`)) return;
+    if (!confirm(`Are you SURE? ${label} will be gone forever.`)) return;
+    const { error } = await _sb.from('quotes').delete().eq('id', quoteId);
+    if (error) { alert('Failed to delete: ' + (error.message || error)); return; }
     if (currentQuoteId === quoteId) { currentQuoteId = null; localStorage.removeItem('spartan_currentQuoteId'); }
     regQuotes = regQuotes.filter(q => q.id !== quoteId);
     regRenderList();
@@ -6326,9 +6420,16 @@ document.querySelectorAll('.reg-filter-btn').forEach(btn => {
     });
 });
 document.getElementById('reg-refresh-btn').addEventListener('click', regRefresh);
-document.getElementById('reg-new-btn').addEventListener('click', () => {
+document.getElementById('reg-new-btn').addEventListener('click', async () => {
     if (currentQuoteId && !confirm('Start a new quote? Current work will be saved first.')) return;
-    if (currentQuoteId) saveQuoteToDb();
+    // AWAIT the save before clearing state — previously this was fire-and-forget
+    // and the reset could race with the save, dropping changes.
+    if (currentQuoteId) {
+        const r = await saveQuoteToDb();
+        if (!r || !r.ok) {
+            if (!confirm('Save failed (a JSON backup was downloaded). Continue starting a new quote anyway? Your current work may be lost.')) return;
+        }
+    }
     // Reset to blank
     currentQuoteId = null;
     localStorage.removeItem('spartan_currentQuoteId');
@@ -8642,17 +8743,17 @@ function quoteFilename(ext) {
 }
 
 // ── Save Quote ────────────────────────────────────────────────
-function saveQuote() {
+async function saveQuote() {
     syncPageOut();
-    // Save to Supabase (cloud)
-    saveQuoteToDb().then(() => {
-        alert('Quote saved to database.');
-        regUpdateCurrentBanner();
-    }).catch(e => {
-        alert('Cloud save failed: ' + e.message + '\nDownloading local backup.');
-        // Fallback: download JSON
-        _downloadQuoteJson();
-    });
+    const r = await saveQuoteToDb();
+    regUpdateCurrentBanner();
+    if (r && r.ok) {
+        // saveQuoteToDb already shows the status toast; no modal alert needed.
+        if (r.restored) alert('Quote row was missing — recreated under the same id. A backup copy is safe.');
+    } else {
+        // saveQuoteToDb already downloaded a JSON backup and showed an error toast.
+        alert('Cloud save failed: ' + ((r && r.error) || 'unknown') + '\nA JSON backup was downloaded to keep your work safe.');
+    }
 }
 function _downloadQuoteJson() {
     syncPageOut();
