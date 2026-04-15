@@ -3297,15 +3297,18 @@ function showJointPopup(shape, pos, cvX, cvY, isCornerSnap = false) {
 function confirmJointPopup() {
     if (!pendingJointShape || !pendingJointPos) return;
     const s = pendingJointShape, pos = pendingJointPos;
-    // Snap to nearest inside corner on placement so the joint can read as a
-    // continuation of the wall at that corner.
-    const SNAP_THRESH = 10;
+    // Snap to nearest inside corner on placement. Use EUCLIDEAN distance so
+    // corners that tie on the axis-perpendicular coord (e.g. both U-shape
+    // inside corners at the same y for a horizontal joint) disambiguate by
+    // cursor position. Without this, whichever corner came first in the
+    // corner list always won regardless of where the user clicked.
+    const SNAP_THRESH = 40;
     let snapCorner = null;
     {
         const corners = getInsideCornersForJoint(s);
         let best = SNAP_THRESH;
         for (const c of corners) {
-            const d = jointOrientation === 'v' ? Math.abs(pos.px - c.x) : Math.abs(pos.py - c.y);
+            const d = Math.hypot(pos.px - c.x, pos.py - c.y);
             if (d < best) { best = d; snapCorner = c; }
         }
     }
@@ -4285,8 +4288,11 @@ cv.addEventListener('mousemove', e => {
 
     if (draggingJoint && draggingJointRef) {
         const { s, j } = draggingJointRef;
-        const SNAP_THRESH = 10; // px — magnetic snap zone at inside corners
-        // Find the nearest inside corner along the joint's axis, within threshold
+        // Magnetic snap to nearest inside corner, measured by EUCLIDEAN distance
+        // so that multiple corners at the same axis-perpendicular coordinate
+        // (e.g. both U-shape inside corners at the same y for a horizontal
+        // joint) correctly disambiguate by cursor position.
+        const SNAP_THRESH = 24; // px — snap radius around the corner
         const corners = getInsideCornersForJoint(s);
         let snapped = null;
         let bestDist = SNAP_THRESH;
@@ -4294,7 +4300,7 @@ cv.addEventListener('mousemove', e => {
             const relPos = j.axis === 'v' ? (c.x - s.x) : (c.y - s.y);
             const axisMin = INCH, axisMax = (j.axis === 'v' ? s.w : s.h) - INCH;
             if (relPos < axisMin || relPos > axisMax) continue;
-            const d = j.axis === 'v' ? Math.abs(p.x - c.x) : Math.abs(p.y - c.y);
+            const d = Math.hypot(p.x - c.x, p.y - c.y);
             if (d < bestDist) { bestDist = d; snapped = { corner: c, relPos }; }
         }
         if (snapped) {
