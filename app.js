@@ -6186,12 +6186,25 @@ function setSaveStatus(state, extra) {
         el.style.border = '1px solid #b09030';
         el.innerHTML = '⟳ Saving…';
     } else if (state === 'saved') {
-        el.style.background = '#1f2a0f';
-        el.style.color = '#b5d070';
-        el.style.border = '1px solid #3a5020';
         const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        el.innerHTML = `✓ Saved · ${ts}`;
-        setTimeout(() => { if (_saveStatusEl && el.innerHTML.startsWith('✓')) el.style.display = 'none'; }, 4000);
+        // Warn loudly when we saved an empty row — that's almost always a bug
+        // (user expected to save a quote they filled in but formData was empty).
+        const isEmpty = !formData.client && !formData.order && !formData.job;
+        const hasShapes = pages.some(p => (p.shapes||[]).length > 0);
+        if (isEmpty && !hasShapes) {
+            el.style.background = '#3a2a10';
+            el.style.color = '#ffcc55';
+            el.style.border = '1px solid #cc9930';
+            el.innerHTML = `⚠ Saved EMPTY quote · ${ts}<div style="font-weight:400;font-size:9px;margin-top:3px;color:#ffd">No client/order/job/shapes — click Save only AFTER filling in the form</div>`;
+            setTimeout(() => { if (_saveStatusEl && el.innerHTML.startsWith('⚠ Saved EMPTY')) el.style.display = 'none'; }, 8000);
+        } else {
+            el.style.background = '#1f2a0f';
+            el.style.color = '#b5d070';
+            el.style.border = '1px solid #3a5020';
+            const label = formData.client || formData.job || formData.order || `${pages.reduce((n,p)=>n+(p.shapes||[]).length,0)} shapes`;
+            el.innerHTML = `✓ Saved · ${ts}<div style="font-weight:400;font-size:9px;margin-top:3px;color:#cfd">${label}</div>`;
+            setTimeout(() => { if (_saveStatusEl && el.innerHTML.startsWith('✓')) el.style.display = 'none'; }, 4000);
+        }
     } else if (state === 'failed') {
         el.style.background = '#3a1a1a';
         el.style.color = '#ff8888';
@@ -6224,6 +6237,22 @@ async function saveQuoteToDb() {
     };
     const fData = { ...formData };
     const pData = { ...pricingData };
+
+    // Diagnostic — surface what's actually being saved so we can catch cases
+    // where formData is empty at save time. Also check the DOM directly so we
+    // can tell if the inputs have text that the user sees but formData missed.
+    const _diag = {
+        formData_client: formData.client,
+        formData_order:  formData.order,
+        formData_job:    formData.job,
+        dom_client: (document.getElementById('f-client') || {}).value,
+        dom_order:  (document.getElementById('f-order')  || {}).value,
+        dom_job:    (document.getElementById('f-job')    || {}).value,
+        shapeCount: pages.reduce((n, p) => n + (p.shapes||[]).length, 0),
+        pageCount:  pages.length,
+        currentQuoteId,
+    };
+    console.log('[saveQuoteToDb]', _diag);
 
     // Ensure we have a stable id. If this is a brand-new quote, mint one
     // locally and persist it so every subsequent save targets the same row.
