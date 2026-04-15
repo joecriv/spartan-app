@@ -24,6 +24,11 @@ function scheduleSyncToRemote() {
 
 async function _syncAllToRemote() {
     if (!currentUserId) return;
+    // Snapshot the quote id at the START of the auto-sync. If New Quote
+    // resets currentQuoteId to null while we're awaiting user_data upserts,
+    // we DON'T want the post-loop check to see a stale id and clobber
+    // the row with empty form data.
+    const snapshotQuoteId = currentQuoteId;
     // Sync localStorage to user_data (session backup)
     for (const key of SYNC_KEYS) {
         const raw = localStorage.getItem(key);
@@ -40,11 +45,15 @@ async function _syncAllToRemote() {
             } catch (e) { console.warn('user_data sync threw for', key, e); }
         }
     }
-    // Also auto-save to the current quote row if one is open.
-    // saveQuoteToDb now surfaces its own error banner + downloads a JSON
-    // backup on failure — no more silent swallow.
-    if (currentQuoteId) {
+    // Auto-save to the current quote row only if BOTH the snapshot id from
+    // the start of this sync AND the current id (which may have been reset
+    // mid-loop) are still set and equal. Prevents the race where reset
+    // happens during user_data upserts and the post-loop check still sees
+    // the old id.
+    if (snapshotQuoteId && snapshotQuoteId === currentQuoteId) {
         await saveQuoteToDb();
+    } else if (snapshotQuoteId && !currentQuoteId) {
+        console.warn('[autoSync] skipping quote save — currentQuoteId was reset mid-sync', snapshotQuoteId);
     }
 }
 
@@ -6238,9 +6247,8 @@ async function saveQuoteToDb() {
     const fData = { ...formData };
     const pData = { ...pricingData };
 
-    // Diagnostic — surface what's actually being saved so we can catch cases
-    // where formData is empty at save time. Also check the DOM directly so we
-    // can tell if the inputs have text that the user sees but formData missed.
+    // Diagnostic — surface what's actually being saved + a stack trace so we
+    // can identify which code path triggered this save.
     const _diag = {
         formData_client: formData.client,
         formData_order:  formData.order,
@@ -6253,6 +6261,19 @@ async function saveQuoteToDb() {
         currentQuoteId,
     };
     console.log('[saveQuoteToDb]', _diag);
+    console.trace('[saveQuoteToDb] stack');
+
+    // GUARDRAIL — refuse to UPDATE an existing row with completely empty data.
+    // If formData has no client/order/job AND there are no shapes, the user
+    // is almost certainly NOT trying to save anything; this guards against
+    // the New-Quote-reset → auto-sync race that was clobbering rows.
+    const _isEmpty = !formData.client && !formData.order && !formData.job;
+    const _hasShapes = pages.some(p => (p.shapes||[]).length > 0);
+    if (currentQuoteId && _isEmpty && !_hasShapes) {
+        console.warn('[saveQuoteToDb] REFUSED — would clobber existing row', currentQuoteId, 'with empty data');
+        setSaveStatus('saved');  // toast still shows; we're "successful" (a no-op)
+        return { ok: true, id: currentQuoteId, skipped: true };
+    }
 
     // Ensure we have a stable id. If this is a brand-new quote, mint one
     // locally and persist it so every subsequent save targets the same row.
