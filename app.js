@@ -7167,11 +7167,13 @@ function rectUnionPolygon(rects) {
             const left  = i > 0    ? grid[j][i-1] : false;
             const right = i < cols ? grid[j][i]   : false;
             if (left === right) continue;
+            // CCW convention: walk the boundary so interior is always on the LEFT.
             if (right && !left) {
-                // left edge of interior — walk upward
-                segments.push({ x1:xList[i], y1:yList[j+1], x2:xList[i], y2:yList[j] });
-            } else {
+                // Interior is to the RIGHT → walk SOUTH (+y) so interior stays on the left.
                 segments.push({ x1:xList[i], y1:yList[j], x2:xList[i], y2:yList[j+1] });
+            } else {
+                // Interior is to the LEFT → walk NORTH (-y).
+                segments.push({ x1:xList[i], y1:yList[j+1], x2:xList[i], y2:yList[j] });
             }
         }
     }
