@@ -6227,6 +6227,9 @@ async function saveQuoteToDb() {
 
     // Ensure we have a stable id. If this is a brand-new quote, mint one
     // locally and persist it so every subsequent save targets the same row.
+    // Track whether the id was fresh so we can distinguish normal first-saves
+    // from the "row was missing and we had to recreate it" self-heal path.
+    const hadExistingId = !!currentQuoteId;
     if (!currentQuoteId) {
         currentQuoteId = _uuidv4();
         localStorage.setItem('spartan_currentQuoteId', currentQuoteId);
@@ -6248,23 +6251,26 @@ async function saveQuoteToDb() {
     };
 
     try {
-        // Try UPDATE first. `.select('id')` returns the affected rows so we
-        // can detect the row-not-found case (update with 0 rows affected —
-        // previously silent; now we catch it and re-insert).
-        const upd = await _sb.from('quotes').update(row).eq('id', currentQuoteId).select('id');
-        if (upd.error) throw upd.error;
-        if (upd.data && upd.data.length > 0) {
-            setSaveStatus('saved');
-            regUpdateCurrentBanner();
-            return { ok: true, id: currentQuoteId };
+        // Fresh id → skip the UPDATE attempt (row can't exist) and go straight
+        // to INSERT. For existing ids, try UPDATE first; if it affects 0 rows
+        // the row is missing (deleted or never persisted) — fall back to INSERT
+        // to self-heal under the same id.
+        if (hadExistingId) {
+            const upd = await _sb.from('quotes').update(row).eq('id', currentQuoteId).select('id');
+            if (upd.error) throw upd.error;
+            if (upd.data && upd.data.length > 0) {
+                setSaveStatus('saved');
+                regUpdateCurrentBanner();
+                return { ok: true, id: currentQuoteId };
+            }
         }
-        // UPDATE affected 0 rows → row doesn't exist. Insert it.
+        // Either a brand-new quote, or the row was missing. INSERT it.
         row.status = 'draft';
         const ins = await _sb.from('quotes').insert(row).select('id').single();
         if (ins.error) throw ins.error;
         setSaveStatus('saved');
         regUpdateCurrentBanner();
-        return { ok: true, id: currentQuoteId, restored: true };
+        return { ok: true, id: currentQuoteId, restored: hadExistingId };
     } catch (err) {
         console.error('saveQuoteToDb failed:', err);
         setSaveStatus('failed', err.message || err.code || String(err));
