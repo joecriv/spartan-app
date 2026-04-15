@@ -6836,11 +6836,12 @@ function shapeLocalRects(s) {
         const leftTopY   = H - lH;
         const rightTopY  = H - rH;
 
-        // Canonical 'top' opening rects in (A, H) coords
+        // Canonical 'top' opening rects in (A, H) coords — NON-OVERLAPPING.
+        // Arms are truncated at floorY so they don't double-count the floor area.
         const canonical = [
-            { x: 0,        y: leftTopY,  w: lW, h: lH },  // left arm
-            { x: 0,        y: floorY,    w: A,  h: fH },  // bottom floor
-            { x: A - rW,   y: rightTopY, w: rW, h: rH },  // right arm
+            { x: 0,        y: leftTopY,  w: lW, h: floorY - leftTopY  },  // left arm (above floor only)
+            { x: A - rW,   y: rightTopY, w: rW, h: floorY - rightTopY },  // right arm (above floor only)
+            { x: 0,        y: floorY,    w: A,  h: fH                 },  // full-width floor
         ].filter(rc => rc.w > 0 && rc.h > 0);
 
         const transform = p => {
@@ -6891,17 +6892,62 @@ function slabAllPieces() {
                 return;
             }
 
-            const vCuts = vJoints.length > 0 ? [0, ...vJoints, wi] : [0, wi];
-            const hCuts = hJoints.length > 0 ? [0, ...hJoints, hi] : [0, hi];
             let segCount = 0;
 
-            // ── Polygon clipping + cleanup ───────────────────────────
-            // Each joint grid cell yields ONE piece: the shape's polygon clipped
-            // to that strip. The cleanup pass removes degenerate slits that
-            // Sutherland-Hodgman produces when a clip line aligns with a
-            // polygon edge (e.g. joint snapped to an inside corner). This keeps
-            // multi-rect shapes (U/BSP) together as a single piece per cell,
-            // while still giving clean rectangles when the joint cuts cleanly.
+            // ── Rect decomposition + cut-aware connected components ──
+            // 1. Decompose the shape into non-overlapping rectangles.
+            // 2. Convert each joint into a cut segment (axis, position, range).
+            //    Snapped joints produce HALF-LINE cuts that extend from the
+            //    corner only in the direction where the wall continues. Un-
+            //    snapped joints produce full-span cuts.
+            // 3. Split each rect where a cut passes all the way through it.
+            // 4. Sub-rects are "connected" iff they share an edge segment that
+            //    is NOT covered by any cut. Connected components → pieces.
+            // 5. Multi-rect pieces emit a proper polygon (union of the rects);
+            //    single-rect pieces emit as a rectangle.
+            const rects = shapeLocalRects(s);
+            if (rects) {
+                const cuts   = jointsToSlabCuts(s, joints, wi, hi);
+                const subs   = sliceRectsByCuts(rects, cuts);
+                const groups = groupConnectedSubRects(subs, cuts);
+                for (const group of groups) {
+                    if (group.length === 1) {
+                        const r = group[0];
+                        out.push({ pageIdx:pi, shapeIdx:si,
+                            label:`${baseLabel}-${SEG_LETTERS[segCount]||segCount+1}`,
+                            pageLabel,
+                            wi: +r.w.toFixed(6), hi: +r.h.toFixed(6),
+                            shapeType:'rect', segIdx:segCount,
+                            segOffset:{ fromX:r.x, fromY:r.y, toX:r.x+r.w, toY:r.y+r.h },
+                            segPoly: null
+                        });
+                        segCount++;
+                        continue;
+                    }
+                    // Multi-rect group — build union polygon
+                    const poly = rectUnionPolygon(group);
+                    if (poly.length < 3) continue;
+                    const xs = poly.map(p=>p[0]), ys = poly.map(p=>p[1]);
+                    const minX=Math.min(...xs), maxX=Math.max(...xs);
+                    const minY=Math.min(...ys), maxY=Math.max(...ys);
+                    const localPoly = poly.map(([x,y]) => [+(x-minX).toFixed(6), +(y-minY).toFixed(6)]);
+                    out.push({ pageIdx:pi, shapeIdx:si,
+                        label:`${baseLabel}-${SEG_LETTERS[segCount]||segCount+1}`,
+                        pageLabel,
+                        wi: +(maxX-minX).toFixed(6), hi: +(maxY-minY).toFixed(6),
+                        shapeType:'rect', segIdx:segCount,
+                        segOffset:{ fromX:minX, fromY:minY, toX:maxX, toY:maxY },
+                        segPoly: localPoly
+                    });
+                    segCount++;
+                }
+                return;
+            }
+
+            // ── Fallback: Sutherland-Hodgman for shapes we can't decompose
+            //    (chamfered, rounded, circle, farmSink, etc.)
+            const vCuts = vJoints.length > 0 ? [0, ...vJoints, wi] : [0, wi];
+            const hCuts = hJoints.length > 0 ? [0, ...hJoints, hi] : [0, hi];
             for (let vi = 0; vi < vCuts.length - 1; vi++) {
                 for (let hj = 0; hj < hCuts.length - 1; hj++) {
                     const xLo = vCuts[vi], xHi = vCuts[vi+1];
@@ -6933,6 +6979,224 @@ function slabAllPieces() {
         });
     });
     return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Rect-decomposition helpers for slab-piece generation (joint-aware).
+// Keeps multi-rect shapes (U/BSP) correctly grouped, and treats snapped
+// joints as half-line cuts rather than full-span cuts.
+// ═══════════════════════════════════════════════════════════════════
+
+// Convert each joint to a cut segment in shape-local inches.
+// Returned spec: { axis: 'h'|'v', pos, aStart, aEnd }.
+// - axis: 'h' = horizontal cut at y=pos, spans x ∈ [aStart, aEnd]
+// - axis: 'v' = vertical   cut at x=pos, spans y ∈ [aStart, aEnd]
+// Snapped joints produce half-line cuts whose direction is determined by
+// a 4-probe test around the corner (same logic as drawJointLines).
+function jointsToSlabCuts(s, joints, wi, hi) {
+    const cuts = [];
+    const poly = shapeLocalPolyInches(s);
+    const probeT = 0.15;  // inches off-axis for interior probing
+    for (const j of joints) {
+        const pos = j.pos / INCH;
+        if (!j.snap) {
+            if (j.axis === 'h') cuts.push({ axis:'h', pos, aStart:0, aEnd:wi });
+            else                 cuts.push({ axis:'v', pos, aStart:0, aEnd:hi });
+            continue;
+        }
+        const cx = j.snap.relX / INCH;
+        const cy = j.snap.relY / INCH;
+        if (j.axis === 'v') {
+            // Which direction is interior along the vertical axis?
+            const upL = pointInPolygon(cx - probeT, cy - probeT, poly);
+            const upR = pointInPolygon(cx + probeT, cy - probeT, poly);
+            const dnL = pointInPolygon(cx - probeT, cy + probeT, poly);
+            const dnR = pointInPolygon(cx + probeT, cy + probeT, poly);
+            const upBoth = upL && upR, dnBoth = dnL && dnR;
+            if (dnBoth && !upBoth)      cuts.push({ axis:'v', pos:cx, aStart:cy, aEnd:hi });
+            else if (upBoth && !dnBoth) cuts.push({ axis:'v', pos:cx, aStart:0,  aEnd:cy });
+            else                         cuts.push({ axis:'v', pos:cx, aStart:0,  aEnd:hi }); // fallback
+        } else {
+            const upL = pointInPolygon(cx - probeT, cy - probeT, poly);
+            const upR = pointInPolygon(cx + probeT, cy - probeT, poly);
+            const dnL = pointInPolygon(cx - probeT, cy + probeT, poly);
+            const dnR = pointInPolygon(cx + probeT, cy + probeT, poly);
+            const leftBoth = upL && dnL, rightBoth = upR && dnR;
+            if (rightBoth && !leftBoth)     cuts.push({ axis:'h', pos:cy, aStart:cx, aEnd:wi });
+            else if (leftBoth && !rightBoth) cuts.push({ axis:'h', pos:cy, aStart:0,  aEnd:cx });
+            else                              cuts.push({ axis:'h', pos:cy, aStart:0,  aEnd:wi }); // fallback
+        }
+    }
+    return cuts;
+}
+
+// For each input rect, split it at the coordinates of any cut that passes
+// ALL THE WAY through it. Partial cuts (that end inside a rect) are skipped
+// here — they still affect connectedness via the adjacency sever check.
+function sliceRectsByCuts(rects, cuts) {
+    const out = [];
+    for (const r of rects) {
+        const xBreaks = new Set([r.x, r.x + r.w]);
+        const yBreaks = new Set([r.y, r.y + r.h]);
+        for (const c of cuts) {
+            if (c.axis === 'v' && c.pos > r.x + 1e-6 && c.pos < r.x + r.w - 1e-6) {
+                if (c.aStart <= r.y + 1e-6 && c.aEnd >= r.y + r.h - 1e-6) xBreaks.add(c.pos);
+            } else if (c.axis === 'h' && c.pos > r.y + 1e-6 && c.pos < r.y + r.h - 1e-6) {
+                if (c.aStart <= r.x + 1e-6 && c.aEnd >= r.x + r.w - 1e-6) yBreaks.add(c.pos);
+            }
+        }
+        const xs = [...xBreaks].sort((a,b)=>a-b);
+        const ys = [...yBreaks].sort((a,b)=>a-b);
+        for (let i = 0; i < xs.length - 1; i++) {
+            for (let j = 0; j < ys.length - 1; j++) {
+                out.push({ x: xs[i], y: ys[j], w: xs[i+1]-xs[i], h: ys[j+1]-ys[j] });
+            }
+        }
+    }
+    return out;
+}
+
+// Return the shared edge between two axis-aligned rects, or null.
+// Shared edge spec: { axis: 'h'|'v', pos, aStart, aEnd }.
+function _sharedEdge(a, b) {
+    const EPS = 1e-6;
+    // a below b (b.bottom == a.top)
+    if (Math.abs(a.y - (b.y + b.h)) < EPS) {
+        const s = Math.max(a.x, b.x), e = Math.min(a.x + a.w, b.x + b.w);
+        if (e > s + EPS) return { axis:'h', pos:a.y, aStart:s, aEnd:e };
+    }
+    if (Math.abs(b.y - (a.y + a.h)) < EPS) {
+        const s = Math.max(a.x, b.x), e = Math.min(a.x + a.w, b.x + b.w);
+        if (e > s + EPS) return { axis:'h', pos:b.y, aStart:s, aEnd:e };
+    }
+    if (Math.abs(a.x - (b.x + b.w)) < EPS) {
+        const s = Math.max(a.y, b.y), e = Math.min(a.y + a.h, b.y + b.h);
+        if (e > s + EPS) return { axis:'v', pos:a.x, aStart:s, aEnd:e };
+    }
+    if (Math.abs(b.x - (a.x + a.w)) < EPS) {
+        const s = Math.max(a.y, b.y), e = Math.min(a.y + a.h, b.y + b.h);
+        if (e > s + EPS) return { axis:'v', pos:b.x, aStart:s, aEnd:e };
+    }
+    return null;
+}
+
+// Does any cut traverse this shared edge? Cut must have same axis + position
+// and a non-zero overlap with the edge's along-axis range.
+function _edgeSevered(edge, cuts) {
+    const EPS = 1e-6;
+    for (const c of cuts) {
+        if (c.axis !== edge.axis) continue;
+        if (Math.abs(c.pos - edge.pos) > EPS) continue;
+        const s = Math.max(edge.aStart, c.aStart);
+        const e = Math.min(edge.aEnd,   c.aEnd);
+        if (e > s + EPS) return true;
+    }
+    return false;
+}
+
+// Union-find grouping: two sub-rects are in the same piece iff they share an
+// edge that no cut passes over.
+function groupConnectedSubRects(subs, cuts) {
+    const n = subs.length;
+    const parent = Array.from({length:n}, (_, i) => i);
+    function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const edge = _sharedEdge(subs[i], subs[j]);
+            if (!edge) continue;
+            if (_edgeSevered(edge, cuts)) continue;
+            union(i, j);
+        }
+    }
+    const buckets = new Map();
+    subs.forEach((r, i) => {
+        const root = find(i);
+        if (!buckets.has(root)) buckets.set(root, []);
+        buckets.get(root).push(r);
+    });
+    return [...buckets.values()];
+}
+
+// Build the boundary polygon of a set of non-overlapping axis-aligned rects
+// that together form a single connected union. Uses a cell-grid boundary trace.
+function rectUnionPolygon(rects) {
+    if (!rects || rects.length === 0) return [];
+    if (rects.length === 1) {
+        const r = rects[0];
+        return [[r.x, r.y], [r.x+r.w, r.y], [r.x+r.w, r.y+r.h], [r.x, r.y+r.h]];
+    }
+    const xs = new Set(), ys = new Set();
+    for (const r of rects) { xs.add(r.x); xs.add(r.x + r.w); ys.add(r.y); ys.add(r.y + r.h); }
+    const xList = [...xs].sort((a,b)=>a-b);
+    const yList = [...ys].sort((a,b)=>a-b);
+    const cols = xList.length - 1, rows = yList.length - 1;
+    // Fill grid — each cell marked inside if its center is inside any rect
+    const grid = [];
+    for (let j = 0; j < rows; j++) {
+        const row = [];
+        const cy = (yList[j] + yList[j+1]) / 2;
+        for (let i = 0; i < cols; i++) {
+            const cx = (xList[i] + xList[i+1]) / 2;
+            let inside = false;
+            for (const r of rects) {
+                if (cx > r.x && cx < r.x + r.w && cy > r.y && cy < r.y + r.h) { inside = true; break; }
+            }
+            row.push(inside);
+        }
+        grid.push(row);
+    }
+    // Collect boundary segments (exterior on the left when walking them).
+    // For each horizontal grid line: if interior differs above vs. below, add a segment.
+    const segments = [];
+    for (let j = 0; j <= rows; j++) {
+        for (let i = 0; i < cols; i++) {
+            const above = j > 0    ? grid[j-1][i] : false;
+            const below = j < rows ? grid[j][i]   : false;
+            if (above === below) continue;
+            if (below && !above) {
+                // top edge of interior — walk right-to-left (so exterior (above) is on the left)
+                segments.push({ x1:xList[i+1], y1:yList[j], x2:xList[i], y2:yList[j] });
+            } else {
+                segments.push({ x1:xList[i], y1:yList[j], x2:xList[i+1], y2:yList[j] });
+            }
+        }
+    }
+    for (let i = 0; i <= cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            const left  = i > 0    ? grid[j][i-1] : false;
+            const right = i < cols ? grid[j][i]   : false;
+            if (left === right) continue;
+            if (right && !left) {
+                // left edge of interior — walk upward
+                segments.push({ x1:xList[i], y1:yList[j+1], x2:xList[i], y2:yList[j] });
+            } else {
+                segments.push({ x1:xList[i], y1:yList[j], x2:xList[i], y2:yList[j+1] });
+            }
+        }
+    }
+    // Chain segments end-to-end into a ring
+    if (segments.length === 0) return [];
+    const used = new Set();
+    const poly = [];
+    let curr = segments[0];
+    used.add(0);
+    poly.push([curr.x1, curr.y1]);
+    let safety = segments.length + 2;
+    while (safety-- > 0) {
+        poly.push([curr.x2, curr.y2]);
+        let nextIdx = -1;
+        for (let i = 0; i < segments.length; i++) {
+            if (used.has(i)) continue;
+            const s = segments[i];
+            if (Math.abs(s.x1 - curr.x2) < 1e-6 && Math.abs(s.y1 - curr.y2) < 1e-6) { nextIdx = i; break; }
+        }
+        if (nextIdx === -1) break;
+        used.add(nextIdx);
+        curr = segments[nextIdx];
+    }
+    // Drop closing duplicate, then collapse collinear middles.
+    return cleanClippedPolygon(poly);
 }
 
 // Removes degenerate vertices from a clipped polygon:
