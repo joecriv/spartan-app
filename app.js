@@ -6510,16 +6510,23 @@ document.querySelectorAll('.reg-filter-btn').forEach(btn => {
 });
 document.getElementById('reg-refresh-btn').addEventListener('click', regRefresh);
 document.getElementById('reg-new-btn').addEventListener('click', async () => {
-    if (currentQuoteId && !confirm('Start a new quote? Current work will be saved first.')) return;
-    // AWAIT the save before clearing state — previously this was fire-and-forget
-    // and the reset could race with the save, dropping changes.
+    console.log('[NEW QUOTE] click — currentQuoteId at start:', currentQuoteId);
+    if (currentQuoteId && !confirm('Start a new quote? Current work will be saved first.')) {
+        console.log('[NEW QUOTE] aborted at first confirm');
+        return;
+    }
     if (currentQuoteId) {
+        console.log('[NEW QUOTE] saving current quote before reset...');
         const r = await saveQuoteToDb();
+        console.log('[NEW QUOTE] save returned:', r);
         if (!r || !r.ok) {
-            if (!confirm('Save failed (a JSON backup was downloaded). Continue starting a new quote anyway? Your current work may be lost.')) return;
+            if (!confirm('Save failed (a JSON backup was downloaded). Continue starting a new quote anyway? Your current work may be lost.')) {
+                console.log('[NEW QUOTE] aborted at second confirm');
+                return;
+            }
         }
     }
-    // Reset to blank
+    console.log('[NEW QUOTE] running reset…');
     currentQuoteId = null;
     localStorage.removeItem('spartan_currentQuoteId');
     pages = [{ id:1, name:'Page 1', shapes:[], textItems:[], measurements:[], nextId:1, _undo:[] }];
@@ -6536,6 +6543,7 @@ document.getElementById('reg-new-btn').addEventListener('click', async () => {
     syncPageIn(); renderPageTabs(); render(); updateStatus();
     regUpdateCurrentBanner();
     switchPanelTab('layout');
+    console.log('[NEW QUOTE] reset complete — currentQuoteId:', currentQuoteId, 'localStorage:', localStorage.getItem('spartan_currentQuoteId'));
 });
 
 // ══════════════════════════════════════════════════════════════════════
