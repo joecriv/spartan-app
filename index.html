@@ -44,7 +44,7 @@
             <button class="tool-btn"        id="btn-edge"    title="Assign Edge Profile">┤ Edge Profile</button>
             <button class="tool-btn"        id="btn-splitedge" title="Split Edge into Segments">✂ Split Edge</button>
             <button class="tool-btn"        id="btn-joint"   title="Insert Joint Line">⋮ Joint</button>
-            <button class="tool-btn"        id="btn-check"   title="Cut a rectangular notch (check) into an edge">⊐ Check</button>
+            <button class="tool-btn"        id="btn-check"   title="Cut a rectangular notch at a corner (pick a corner)">⊐ Check</button>
             <button class="tool-btn"        id="btn-text"    title="Add Text Annotation">T Text</button>
             <button class="tool-btn"        id="btn-measure" title="Measurement Tool">↔ Mesure</button>
             <div class="tool-sep"></div>
@@ -374,11 +374,11 @@
 </div>
 
 <div id="check-popup" class="popup-box" style="min-width:240px">
-    <h3>Add Check (notch)</h3>
-    <div class="pop-hint" style="margin-bottom:6px">Carve a rectangular notch into this edge.</div>
+    <h3>Add Check (corner notch)</h3>
+    <div class="pop-hint" style="margin-bottom:6px">Carve a rectangular notch out of this corner.</div>
     <div class="pop-row"><label>Width <span>(in)</span></label><input id="check-width" type="number" min="0.25" max="240" step="0.25" value="4"></div>
     <div class="pop-row"><label>Depth <span>(in)</span></label><input id="check-depth" type="number" min="0.25" max="240" step="0.25" value="4"></div>
-    <div class="pop-hint" style="font-size:9px;opacity:0.7">Notch centers on where you clicked along the edge.</div>
+    <div class="pop-hint" style="font-size:9px;opacity:0.7">Width runs along the horizontal edge, depth along the vertical.</div>
     <div class="pop-btns"><button class="pop-ok" id="check-ok">Add Check</button><button class="pop-cancel" id="check-cancel">Cancel</button></div>
 </div>
 

@@ -361,7 +361,7 @@ function normalizeShape(s) {
         joints:    (s.joints   || []).map(j => ({ ...j })),
         cornerEdges: s.cornerEdges || {nw:{type:'none'},ne:{type:'none'},se:{type:'none'},sw:{type:'none'}},
         farmSink:  s.farmSink  || null, // { edge:'top'|'bottom', cx: <px from shape.x> }
-        checks:    (s.checks   || []).map(c => ({ ...c })), // rectangular notches
+        checks:    (s.checks   || []).filter(c => c.cornerKey).map(c => ({ ...c })), // corner notches
     };
     if (base.shapeType === 'l') {
         base.notchW      = s.notchW      || 0;
@@ -2337,8 +2337,9 @@ function drawShape(s, sel) {
         ctx.restore();
     }
 
-    // (Check notches are handled via the notched-polygon fill above and the
-    // per-edge border split in drawRectEdgeWithChecks — no white-carve needed.)
+    // (Corner-check notches: fill uses the notched polygon above; adjacent
+    // border edges are naturally shortened and the two inner walls of each
+    // notch are drawn separately below.)
 
     // 2. Border — each side drawn with its profile
     // A = along first incoming side, B = along outgoing side (0 = goes all the way to corner)
@@ -2346,39 +2347,30 @@ function drawShape(s, sel) {
     const neA = ch.ne > 0 ? ch.ne : r.ne,  neB = ch.ne > 0 ? chB.ne : r.ne;
     const seA = ch.se > 0 ? ch.se : r.se,  seB = ch.se > 0 ? chB.se : r.se;
     const swA = ch.sw > 0 ? ch.sw : r.sw,  swB = ch.sw > 0 ? chB.sw : r.sw;
-    const sides = [
-        { key:'top',    x1:s.x+nwA,    y1:s.y,          x2:s.x+s.w-neA, y2:s.y         },
-        { key:'right',  x1:s.x+s.w,    y1:s.y+neB,      x2:s.x+s.w,      y2:s.y+s.h-seA},
-        { key:'bottom', x1:s.x+s.w-seB,y1:s.y+s.h,      x2:s.x+swA,      y2:s.y+s.h    },
-        { key:'left',   x1:s.x,         y1:s.y+s.h-swB,  x2:s.x,          y2:s.y+nwB    },
-    ];
-    // When a check notch reaches a corner, the adjacent edge would draw
-    // straight through the carved area (phantom line). Truncate the adjacent
-    // edge by the check's depth so the border follows the true outline.
+    // Corner check notches shorten the two edges meeting at that corner by
+    // the check's width (along horizontal edge) and depth (along vertical
+    // edge). The two perpendicular inner walls of the notch are drawn
+    // separately below with plain ('none') profile.
+    const ckByCorner = { nw:null, ne:null, se:null, sw:null };
     if (hasChecks && (s.shapeType || 'rect') === 'rect') {
-        const epsCk = 0.5;
-        const ins = { top_s:0, top_e:0, right_s:0, right_e:0, bottom_s:0, bottom_e:0, left_s:0, left_e:0 };
         for (const c of s.checks) {
-            const half = c.w / 2;
-            if (c.edgeKey === 'top') {
-                if (c.cx - half <= epsCk)        ins.left_e  = Math.max(ins.left_e,  c.d);
-                if (c.cx + half >= s.w - epsCk)  ins.right_s = Math.max(ins.right_s, c.d);
-            } else if (c.edgeKey === 'right') {
-                if (c.cx - half <= epsCk)        ins.top_e   = Math.max(ins.top_e,   c.d);
-                if (c.cx + half >= s.h - epsCk)  ins.bottom_s= Math.max(ins.bottom_s,c.d);
-            } else if (c.edgeKey === 'bottom') {
-                if (c.cx + half >= s.w - epsCk)  ins.right_e = Math.max(ins.right_e, c.d);
-                if (c.cx - half <= epsCk)        ins.left_s  = Math.max(ins.left_s,  c.d);
-            } else if (c.edgeKey === 'left') {
-                if (c.cx + half >= s.h - epsCk)  ins.bottom_e= Math.max(ins.bottom_e,c.d);
-                if (c.cx - half <= epsCk)        ins.top_s   = Math.max(ins.top_s,   c.d);
-            }
+            if (ckByCorner.hasOwnProperty(c.cornerKey)) ckByCorner[c.cornerKey] = c;
         }
-        sides[0].x1 += ins.top_s;     sides[0].x2 -= ins.top_e;
-        sides[1].y1 += ins.right_s;   sides[1].y2 -= ins.right_e;
-        sides[2].x1 -= ins.bottom_s;  sides[2].x2 += ins.bottom_e;
-        sides[3].y1 -= ins.left_s;    sides[3].y2 += ins.left_e;
     }
+    const nwCkW = ckByCorner.nw ? ckByCorner.nw.w : 0;
+    const nwCkD = ckByCorner.nw ? ckByCorner.nw.d : 0;
+    const neCkW = ckByCorner.ne ? ckByCorner.ne.w : 0;
+    const neCkD = ckByCorner.ne ? ckByCorner.ne.d : 0;
+    const seCkW = ckByCorner.se ? ckByCorner.se.w : 0;
+    const seCkD = ckByCorner.se ? ckByCorner.se.d : 0;
+    const swCkW = ckByCorner.sw ? ckByCorner.sw.w : 0;
+    const swCkD = ckByCorner.sw ? ckByCorner.sw.d : 0;
+    const sides = [
+        { key:'top',    x1:s.x+nwA+nwCkW,   y1:s.y,              x2:s.x+s.w-neA-neCkW, y2:s.y               },
+        { key:'right',  x1:s.x+s.w,          y1:s.y+neB+neCkD,   x2:s.x+s.w,           y2:s.y+s.h-seA-seCkD },
+        { key:'bottom', x1:s.x+s.w-seB-seCkW,y1:s.y+s.h,         x2:s.x+swA+swCkW,     y2:s.y+s.h           },
+        { key:'left',   x1:s.x,              y1:s.y+s.h-swB-swCkD,x2:s.x,              y2:s.y+nwB+nwCkD     },
+    ];
     for (const sd of sides) {
         const edgeData = s.edges?.[sd.key];
         // Skip the cutout span on the FS edge — draw left/right pieces with their own profiles
@@ -2404,14 +2396,31 @@ function drawShape(s, sel) {
         if (sd.key === 'bottom') labelOffset = { dx:0, dy: 14 };
         if (sd.key === 'left')   labelOffset = { dx:-14, dy:0 };
         if (sd.key === 'right')  labelOffset = { dx: 14, dy:0 };
-        // If this edge has check(s), split it around each notch so the
-        // border traces the real outline (pre-notch + into + across + out + post-notch).
-        const checksOnEdge = (s.checks || []).filter(c => c.edgeKey === sd.key);
-        if (checksOnEdge.length > 0) {
-            drawRectEdgeWithChecks(s, sd, edgeData, sel, checksOnEdge, labelOffset);
-            continue;
-        }
         drawEdgeDatum(edgeData || { type: 'none' }, sd.key, sd.x1, sd.y1, sd.x2, sd.y2, sel, labelOffset);
+    }
+    // Draw the two perpendicular inner walls for each corner notch, with
+    // plain 'none' profile. These form the L-shape that reads as carved-out.
+    if (hasChecks && (s.shapeType || 'rect') === 'rect') {
+        if (ckByCorner.nw) {
+            const { w, d } = ckByCorner.nw;
+            drawEdgeDatum({ type:'none' }, 'ck_nw_h', s.x,     s.y + d, s.x + w, s.y + d, sel);
+            drawEdgeDatum({ type:'none' }, 'ck_nw_v', s.x + w, s.y + d, s.x + w, s.y,     sel);
+        }
+        if (ckByCorner.ne) {
+            const { w, d } = ckByCorner.ne;
+            drawEdgeDatum({ type:'none' }, 'ck_ne_v', s.x + s.w - w, s.y,     s.x + s.w - w, s.y + d, sel);
+            drawEdgeDatum({ type:'none' }, 'ck_ne_h', s.x + s.w - w, s.y + d, s.x + s.w,     s.y + d, sel);
+        }
+        if (ckByCorner.se) {
+            const { w, d } = ckByCorner.se;
+            drawEdgeDatum({ type:'none' }, 'ck_se_h', s.x + s.w,     s.y + s.h - d, s.x + s.w - w, s.y + s.h - d, sel);
+            drawEdgeDatum({ type:'none' }, 'ck_se_v', s.x + s.w - w, s.y + s.h - d, s.x + s.w - w, s.y + s.h,     sel);
+        }
+        if (ckByCorner.sw) {
+            const { w, d } = ckByCorner.sw;
+            drawEdgeDatum({ type:'none' }, 'ck_sw_v', s.x + w, s.y + s.h,     s.x + w, s.y + s.h - d, sel);
+            drawEdgeDatum({ type:'none' }, 'ck_sw_h', s.x + w, s.y + s.h - d, s.x,     s.y + s.h - d, sel);
+        }
     }
 
     // 2b. Corner arcs — styled per cornerEdges assignment
@@ -2805,27 +2814,27 @@ function render() {
         }
         ctx.restore();
     }
-    // When the Check tool is active, highlight the midpoint of each edge on
-    // every rect shape so the user sees exactly where a check can be placed.
+    // When the Check tool is active, highlight each corner on every rect
+    // shape so the user can pick exactly which corner gets the notch.
     if (tool === 'check') {
         ctx.save();
         for (const s of shapes) {
             if (s.subtype) continue;
             if ((s.shapeType || 'rect') !== 'rect') continue;
-            const mids = [
-                { x: s.x + s.w/2, y: s.y },           // top
-                { x: s.x + s.w,   y: s.y + s.h/2 },   // right
-                { x: s.x + s.w/2, y: s.y + s.h },     // bottom
-                { x: s.x,         y: s.y + s.h/2 },   // left
+            const corners = [
+                { x: s.x,         y: s.y         },  // nw
+                { x: s.x + s.w,   y: s.y         },  // ne
+                { x: s.x + s.w,   y: s.y + s.h   },  // se
+                { x: s.x,         y: s.y + s.h   },  // sw
             ];
-            for (const m of mids) {
+            for (const cn of corners) {
                 ctx.beginPath();
-                ctx.arc(m.x, m.y, 12, 0, Math.PI * 2);
+                ctx.arc(cn.x, cn.y, 12, 0, Math.PI * 2);
                 ctx.strokeStyle = 'rgba(176,144,48,0.35)';
                 ctx.lineWidth = 2.5;
                 ctx.stroke();
                 ctx.beginPath();
-                ctx.arc(m.x, m.y, 5, 0, Math.PI * 2);
+                ctx.arc(cn.x, cn.y, 5, 0, Math.PI * 2);
                 ctx.fillStyle = '#b09030';
                 ctx.fill();
                 ctx.lineWidth = 1.5;
@@ -2925,7 +2934,7 @@ function hideAllPopups() {
         document.getElementById(id).style.display = 'none');
     currentPopup = null; pendingPlace = null; pendingCorner = null;
     pendingEdge = null; pendingJointShape = null; pendingJointPos = null;
-    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
+    pendingCheckShape = null; pendingCheckCorner = null;
 }
 
 function screenPos(cvX, cvY) {
@@ -3429,13 +3438,13 @@ document.getElementById('joint-ok').addEventListener('click', confirmJointPopup)
 document.getElementById('joint-cancel').addEventListener('click', () => hideAllPopups());
 
 // ── Check (notch) popup ──────────────────────────────────────
-// A "check" is a rectangular notch carved from an edge of a piece, used
+// A "check" is a rectangular notch cut out of a CORNER of a rect piece, used
 // to accommodate wall obstructions, columns, posts, etc. Stored on the shape
-// as s.checks = [{ id, edgeKey, cx, w, d }] where all offsets are in pixels
-// and edgeKey is 'top'/'right'/'bottom'/'left' for rect shapes.
-let pendingCheckShape = null;
-let pendingCheckEdge  = null;
-let pendingCheckClick = null;
+// as s.checks = [{ id, cornerKey, w, d }] where w/d are in pixels and
+// cornerKey is 'nw'/'ne'/'se'/'sw'. w runs along the corner's horizontal
+// edge (top/bottom), d runs along the corner's vertical edge (left/right).
+let pendingCheckShape  = null;
+let pendingCheckCorner = null;
 function showCheckPopup(cvX, cvY) {
     hideAllPopups();
     currentPopup = 'check';
@@ -3445,37 +3454,27 @@ function showCheckPopup(cvX, cvY) {
     setTimeout(() => { widthInp.focus(); widthInp.select(); }, 50);
 }
 function confirmCheckPopup() {
-    if (!pendingCheckShape || !pendingCheckEdge || !pendingCheckClick) { hideAllPopups(); return; }
+    if (!pendingCheckShape || !pendingCheckCorner) { hideAllPopups(); return; }
     const widthIn = Math.max(0.25, parseFloat(document.getElementById('check-width').value) || 4);
     const depthIn = Math.max(0.25, parseFloat(document.getElementById('check-depth').value) || 4);
     const s = pendingCheckShape;
-    const edgeKey = pendingCheckEdge;
+    const cornerKey = pendingCheckCorner;
     const wPx = widthIn * INCH, dPx = depthIn * INCH;
 
-    // Determine along-edge center (cx) clamped so the check stays entirely on the edge
-    let cx;
-    if (edgeKey === 'top' || edgeKey === 'bottom') {
-        cx = pendingCheckClick.x - s.x;
-        cx = Math.max(wPx/2, Math.min(s.w - wPx/2, cx));
-        if (dPx > s.h - 0.5) { alert(`Depth ${depthIn}" is deeper than the piece (${(s.h/INCH).toFixed(2)}"). Reduce depth.`); return; }
-    } else {
-        cx = pendingCheckClick.y - s.y;
-        cx = Math.max(wPx/2, Math.min(s.h - wPx/2, cx));
-        if (dPx > s.w - 0.5) { alert(`Depth ${depthIn}" is deeper than the piece (${(s.w/INCH).toFixed(2)}"). Reduce depth.`); return; }
-    }
-    if (wPx > (edgeKey === 'top' || edgeKey === 'bottom' ? s.w : s.h) - 0.5) {
-        alert(`Width ${widthIn}" is wider than the edge. Reduce width.`); return;
-    }
+    if (wPx >= s.w - 0.5) { alert(`Width ${widthIn}" is as wide as the piece (${(s.w/INCH).toFixed(2)}"). Reduce width.`); return; }
+    if (dPx >= s.h - 0.5) { alert(`Depth ${depthIn}" is as tall as the piece (${(s.h/INCH).toFixed(2)}"). Reduce depth.`); return; }
 
-    pushUndo();
+    // Replace any existing check on the same corner (one notch per corner)
     if (!s.checks) s.checks = [];
-    s.checks.push({ id: Date.now(), edgeKey, cx, w: wPx, d: dPx });
-    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
+    pushUndo();
+    s.checks = s.checks.filter(c => c.cornerKey !== cornerKey);
+    s.checks.push({ id: Date.now(), cornerKey, w: wPx, d: dPx });
+    pendingCheckShape = null; pendingCheckCorner = null;
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('check-ok').addEventListener('click', confirmCheckPopup);
 document.getElementById('check-cancel').addEventListener('click', () => {
-    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
+    pendingCheckShape = null; pendingCheckCorner = null;
     hideAllPopups();
 });
 document.getElementById('check-width').addEventListener('keydown', e => {
@@ -3498,77 +3497,11 @@ function totalCheckAreaPx(s) {
 
 // Returns absolute canvas rect {x, y, w, h} for a check on a rect shape.
 function checkRectAbs(s, c) {
-    if (c.edgeKey === 'top')    return { x: s.x + c.cx - c.w/2, y: s.y,                w: c.w, h: c.d };
-    if (c.edgeKey === 'bottom') return { x: s.x + c.cx - c.w/2, y: s.y + s.h - c.d,    w: c.w, h: c.d };
-    if (c.edgeKey === 'left')   return { x: s.x,                y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
-    if (c.edgeKey === 'right')  return { x: s.x + s.w - c.d,    y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
+    if (c.cornerKey === 'nw') return { x: s.x,              y: s.y,              w: c.w, h: c.d };
+    if (c.cornerKey === 'ne') return { x: s.x + s.w - c.w,  y: s.y,              w: c.w, h: c.d };
+    if (c.cornerKey === 'se') return { x: s.x + s.w - c.w,  y: s.y + s.h - c.d,  w: c.w, h: c.d };
+    if (c.cornerKey === 'sw') return { x: s.x,              y: s.y + s.h - c.d,  w: c.w, h: c.d };
     return null;
-}
-
-// Draw a rect edge that has one or more checks on it. Splits the edge into
-// pre-notch + U (into + across + out) + post-notch segments; the outer
-// (pre/post) segments inherit the edge's profile, the notch's 3 inner sides
-// render as plain 'none' borders (profiles on notch sides are a future feature).
-function drawRectEdgeWithChecks(s, sd, edgeData, sel, checksOnEdge, labelOffset) {
-    const dx = sd.x2 - sd.x1, dy = sd.y2 - sd.y1;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-6) return;
-    const ux = dx / len, uy = dy / len;
-    // Inward normal: perpendicular pointing into the piece.
-    let nx = 0, ny = 0;
-    if (sd.key === 'top')    { nx = 0;  ny = 1; }
-    if (sd.key === 'bottom') { nx = 0;  ny = -1; }
-    if (sd.key === 'left')   { nx = 1;  ny = 0; }
-    if (sd.key === 'right')  { nx = -1; ny = 0; }
-
-    // Convert each check to its along-edge range [t0, t1] in sd's parameter
-    // space. sd traverses CW: top L→R, right T→B, bottom R→L, left B→T.
-    // shape-local cx is the notch center measured from shape origin along
-    // that edge's PERPENDICULAR axis. For top/right, t increases with cx.
-    // For bottom/left, t increases as cx DECREASES (edge runs backward).
-    const ranges = checksOnEdge.map(c => {
-        let tCenter;
-        if (sd.key === 'top')    tCenter = c.cx;          // sd.x1 = s.x, t = cx
-        else if (sd.key === 'right')  tCenter = c.cx;     // sd.y1 = s.y, t = cx
-        else if (sd.key === 'bottom') tCenter = s.w - c.cx; // sd.x1 = s.x+s.w, t grows leftward
-        else                           tCenter = s.h - c.cx; // left: sd.y1 = s.y+s.h, t grows upward
-        return { t0: tCenter - c.w/2, t1: tCenter + c.w/2, d: c.d };
-    }).filter(r => r.t1 > 0 && r.t0 < len)
-      .sort((a, b) => a.t0 - b.t0);
-
-    // Walk segments
-    let cursor = 0;
-    const edgeDatum = edgeData || { type: 'none' };
-    function ptAt(t)      { return [sd.x1 + ux*t, sd.y1 + uy*t]; }
-    function deepPt(t, d) { const [x, y] = ptAt(t); return [x + nx*d, y + ny*d]; }
-
-    let idx = 0;
-    for (const r of ranges) {
-        // Pre-notch: cursor → t0
-        if (r.t0 > cursor + 0.5) {
-            const [ax, ay] = ptAt(cursor);
-            const [bx, by] = ptAt(r.t0);
-            drawEdgeDatum(edgeDatum, sd.key + '_pre' + idx, ax, ay, bx, by, sel, labelOffset);
-        }
-        // Into notch: (t0 on edge) → deep (t0, d)
-        const [ix, iy] = ptAt(r.t0);
-        const [dx1, dy1] = deepPt(r.t0, r.d);
-        drawEdgeDatum({ type:'none' }, sd.key + '_notchIn' + idx, ix, iy, dx1, dy1, sel);
-        // Across bottom of notch: deep (t0) → deep (t1)
-        const [dx2, dy2] = deepPt(r.t1, r.d);
-        drawEdgeDatum({ type:'none' }, sd.key + '_notchBot' + idx, dx1, dy1, dx2, dy2, sel);
-        // Out of notch: deep (t1) → (t1 on edge)
-        const [ox, oy] = ptAt(r.t1);
-        drawEdgeDatum({ type:'none' }, sd.key + '_notchOut' + idx, dx2, dy2, ox, oy, sel);
-        cursor = r.t1;
-        idx++;
-    }
-    // Post-notch: cursor → end
-    if (cursor < len - 0.5) {
-        const [ax, ay] = ptAt(cursor);
-        const [bx, by] = ptAt(len);
-        drawEdgeDatum(edgeDatum, sd.key + '_post', ax, ay, bx, by, sel, labelOffset);
-    }
 }
 
 // ── L-Shape popup ────────────────────────────────────────────
@@ -4360,26 +4293,31 @@ cv.addEventListener('mousedown', e => {
         render(); return;
     }
 
-    // ── Check (rectangular notch on an edge) ──
+    // ── Check (rectangular notch at a corner) ──
     if (tool === 'check') {
-        const eh = nearestEdge(p.x, p.y);
-        if (!eh || eh.s.subtype) {
-            alert('Click on an edge of a piece to place a check.');
+        const SNAP = 40;
+        let best = { dist: SNAP, s: null, cornerKey: null, cx: 0, cy: 0 };
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            if ((s.shapeType || 'rect') !== 'rect') continue;
+            const corners = [
+                { key:'nw', x: s.x,       y: s.y       },
+                { key:'ne', x: s.x + s.w, y: s.y       },
+                { key:'se', x: s.x + s.w, y: s.y + s.h },
+                { key:'sw', x: s.x,       y: s.y + s.h },
+            ];
+            for (const cn of corners) {
+                const d = Math.hypot(p.x - cn.x, p.y - cn.y);
+                if (d < best.dist) best = { dist: d, s, cornerKey: cn.key, cx: cn.x, cy: cn.y };
+            }
+        }
+        if (!best.s) {
+            alert('Click near a corner of a rectangle piece to place a check.');
             return;
         }
-        if ((eh.s.shapeType || 'rect') !== 'rect') {
-            alert('Check tool currently supports rectangle pieces. L/U/BSP support coming soon.');
-            return;
-        }
-        // 4 possible edges on a rect: top, right, bottom, left
-        if (!['top','right','bottom','left'].includes(eh.key)) {
-            alert('Click on a main edge of the rectangle.');
-            return;
-        }
-        pendingCheckShape = eh.s;
-        pendingCheckEdge  = eh.key;
-        pendingCheckClick = { x: p.x, y: p.y };
-        showCheckPopup(p.x, p.y);
+        pendingCheckShape  = best.s;
+        pendingCheckCorner = best.cornerKey;
+        showCheckPopup(best.cx, best.cy);
         return;
     }
 
@@ -6907,53 +6845,45 @@ function injectFsNotchInchesLocal(poly, s) {
 // Walks the 4 edges CW and injects a U-shaped notch for each check on that edge.
 function buildRectPolyWithChecks(s) {
     const wi = s.w / INCH, hi = s.h / INCH;
-    const checks = s.checks || [];
-    const byEdge = { top: [], right: [], bottom: [], left: [] };
-    for (const c of checks) {
-        if (byEdge[c.edgeKey]) byEdge[c.edgeKey].push({
-            cxIn: c.cx / INCH,
-            wIn:  c.w  / INCH,
-            dIn:  c.d  / INCH,
-        });
+    const byCorner = { nw: null, ne: null, se: null, sw: null };
+    for (const c of (s.checks || [])) {
+        if (byCorner.hasOwnProperty(c.cornerKey)) {
+            byCorner[c.cornerKey] = { wIn: c.w / INCH, dIn: c.d / INCH };
+        }
     }
-    // Sort along edge traversal direction (CW from top-left)
-    byEdge.top.sort((a, b) => a.cxIn - b.cxIn);          // left → right
-    byEdge.right.sort((a, b) => a.cxIn - b.cxIn);        // top → bottom
-    byEdge.bottom.sort((a, b) => b.cxIn - a.cxIn);       // right → left
-    byEdge.left.sort((a, b) => b.cxIn - a.cxIn);         // bottom → top
-
     const out = [];
-    // Top-left corner → right along top edge
-    out.push([0, 0]);
-    for (const c of byEdge.top) {
-        out.push([c.cxIn - c.wIn/2, 0]);
-        out.push([c.cxIn - c.wIn/2, c.dIn]);
-        out.push([c.cxIn + c.wIn/2, c.dIn]);
-        out.push([c.cxIn + c.wIn/2, 0]);
+    // Walk CW starting at (or near) the top-left corner.
+    // NW corner: if notched, enter the top edge at (nw.w, 0) instead of (0,0).
+    if (byCorner.nw) out.push([byCorner.nw.wIn, 0]);
+    else             out.push([0, 0]);
+    // Top edge → NE corner
+    if (byCorner.ne) {
+        out.push([wi - byCorner.ne.wIn, 0]);
+        out.push([wi - byCorner.ne.wIn, byCorner.ne.dIn]);
+        out.push([wi,                    byCorner.ne.dIn]);
+    } else {
+        out.push([wi, 0]);
     }
-    // Top-right corner → down along right edge
-    out.push([wi, 0]);
-    for (const c of byEdge.right) {
-        out.push([wi, c.cxIn - c.wIn/2]);
-        out.push([wi - c.dIn, c.cxIn - c.wIn/2]);
-        out.push([wi - c.dIn, c.cxIn + c.wIn/2]);
-        out.push([wi, c.cxIn + c.wIn/2]);
+    // Right edge → SE corner
+    if (byCorner.se) {
+        out.push([wi,                    hi - byCorner.se.dIn]);
+        out.push([wi - byCorner.se.wIn,  hi - byCorner.se.dIn]);
+        out.push([wi - byCorner.se.wIn,  hi]);
+    } else {
+        out.push([wi, hi]);
     }
-    // Bottom-right corner → left along bottom edge
-    out.push([wi, hi]);
-    for (const c of byEdge.bottom) {
-        out.push([c.cxIn + c.wIn/2, hi]);
-        out.push([c.cxIn + c.wIn/2, hi - c.dIn]);
-        out.push([c.cxIn - c.wIn/2, hi - c.dIn]);
-        out.push([c.cxIn - c.wIn/2, hi]);
+    // Bottom edge → SW corner
+    if (byCorner.sw) {
+        out.push([byCorner.sw.wIn, hi]);
+        out.push([byCorner.sw.wIn, hi - byCorner.sw.dIn]);
+        out.push([0,               hi - byCorner.sw.dIn]);
+    } else {
+        out.push([0, hi]);
     }
-    // Bottom-left corner → up along left edge
-    out.push([0, hi]);
-    for (const c of byEdge.left) {
-        out.push([0, c.cxIn + c.wIn/2]);
-        out.push([c.dIn, c.cxIn + c.wIn/2]);
-        out.push([c.dIn, c.cxIn - c.wIn/2]);
-        out.push([0, c.cxIn - c.wIn/2]);
+    // Left edge → back to NW corner (close the loop)
+    if (byCorner.nw) {
+        out.push([0,                    byCorner.nw.dIn]);
+        out.push([byCorner.nw.wIn,      byCorner.nw.dIn]);
     }
     return out;
 }
