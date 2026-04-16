@@ -361,7 +361,7 @@ function normalizeShape(s) {
         joints:    (s.joints   || []).map(j => ({ ...j })),
         cornerEdges: s.cornerEdges || {nw:{type:'none'},ne:{type:'none'},se:{type:'none'},sw:{type:'none'}},
         farmSink:  s.farmSink  || null, // { edge:'top'|'bottom', cx: <px from shape.x> }
-        checks:    (s.checks   || []).filter(c => c.cornerKey).map(c => ({ ...c })), // corner notches
+        checks:    (s.checks   || []).filter(c => c.cornerKey || c.vertexIdx != null).map(c => ({ ...c })), // corner notches
     };
     if (base.shapeType === 'l') {
         base.notchW      = s.notchW      || 0;
@@ -1873,19 +1873,38 @@ function lShapeVerts(s) {
 
 function drawLShape(s, sel) {
     const verts = lShapeVerts(s);
+    const basePoly = lShapePolygon(s);
     const n = verts.length;
     const fill = sel ? 'rgba(201,168,76,0.12)' : 'rgba(218,230,248,0.88)';
 
-    // 1. Fill with corner treatments
+    // Per-vertex check data (A/B/C points). Corner treatment on a vertex is
+    // superseded by a check on the same vertex.
+    const checkAt = new Array(n).fill(null);
+    for (const c of (s.checks || [])) {
+        if (c.vertexIdx != null && c.vertexIdx >= 0 && c.vertexIdx < n) {
+            checkAt[c.vertexIdx] = cornerCheckPoints(basePoly, c.vertexIdx, c);
+        }
+    }
+    const startPt = checkAt[0] ? checkAt[0].B : verts[0].pout;
+
+    // 1. Fill with corner treatments (and carve out corner-check notches)
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(verts[0].pout[0], verts[0].pout[1]);
+    ctx.moveTo(startPt[0], startPt[1]);
     for (let i = 0; i < n; i++) {
-        const nv = verts[(i+1)%n];
-        ctx.lineTo(nv.pin[0], nv.pin[1]);
-        if (nv.t > 0) {
-            if (nv.r === 0) ctx.lineTo(nv.pout[0], nv.pout[1]);
-            else ctx.arcTo(nv.curr[0], nv.curr[1], nv.pout[0], nv.pout[1], nv.r);
+        const nextI = (i+1)%n;
+        const nv = verts[nextI];
+        const nvCk = checkAt[nextI];
+        if (nvCk) {
+            ctx.lineTo(nvCk.A[0], nvCk.A[1]);
+            ctx.lineTo(nvCk.C[0], nvCk.C[1]);
+            ctx.lineTo(nvCk.B[0], nvCk.B[1]);
+        } else {
+            ctx.lineTo(nv.pin[0], nv.pin[1]);
+            if (nv.t > 0) {
+                if (nv.r === 0) ctx.lineTo(nv.pout[0], nv.pout[1]);
+                else ctx.arcTo(nv.curr[0], nv.curr[1], nv.pout[0], nv.pout[1], nv.r);
+            }
         }
     }
     ctx.closePath();
@@ -1901,14 +1920,20 @@ function drawLShape(s, sel) {
         ctx.restore();
     }
 
-    // 2. Border — 6 sides (endpoints adjusted for corner treatments)
+    // 2. Border — 6 sides (endpoints adjusted for corner treatments + checks)
     for (let i = 0; i < n; i++) {
         const v = verts[i], nv = verts[(i+1)%n];
+        const vCk = checkAt[i], nvCk = checkAt[(i+1)%n];
         const key = `seg${i}`;
-        const sd = { x1: v.pout[0], y1: v.pout[1], x2: nv.pin[0], y2: nv.pin[1] };
+        const sd = {
+            x1: vCk  ? vCk.B[0]  : v.pout[0],
+            y1: vCk  ? vCk.B[1]  : v.pout[1],
+            x2: nvCk ? nvCk.A[0] : nv.pin[0],
+            y2: nvCk ? nvCk.A[1] : nv.pin[1],
+        };
         drawPolyEdgeMaybeFS(s, sd, key, sel);
-        // Draw corner treatment at nv
-        if (nv.t > 0) {
+        // Draw corner treatment at nv — skipped when nv has a check
+        if (nv.t > 0 && !nvCk) {
             if (nv.r === 0) {
                 const diagStoreKey = `lc${(i+1)%n}`;
                 const chData = s.chamferEdges?.[diagStoreKey];
@@ -1975,6 +2000,14 @@ function drawLShape(s, sel) {
         }
     }
 
+    // 2b. Check notch inner walls (two perpendicular 'none' segments per notch)
+    for (let i = 0; i < n; i++) {
+        const c = checkAt[i];
+        if (!c) continue;
+        drawEdgeDatum({ type:'none' }, `lck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
+        drawEdgeDatum({ type:'none' }, `lck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
+    }
+
     // 3. Dimension lines (vertex to vertex — shows full physical dimension)
     const pts = lShapePolygon(s);
     for (let i=0; i<6; i++) {
@@ -1985,13 +2018,21 @@ function drawLShape(s, sel) {
     // 4. Selection outline
     if (sel) {
         ctx.save(); ctx.strokeStyle='#b09030'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
-        ctx.beginPath(); ctx.moveTo(verts[0].pout[0], verts[0].pout[1]);
+        ctx.beginPath(); ctx.moveTo(startPt[0], startPt[1]);
         for (let i=0; i<n; i++) {
-            const nv=verts[(i+1)%n];
-            ctx.lineTo(nv.pin[0],nv.pin[1]);
-            if (nv.t>0) {
-                if (nv.r===0) ctx.lineTo(nv.pout[0],nv.pout[1]);
-                else ctx.arcTo(nv.curr[0],nv.curr[1],nv.pout[0],nv.pout[1],nv.r);
+            const nextI = (i+1)%n;
+            const nv = verts[nextI];
+            const nvCk = checkAt[nextI];
+            if (nvCk) {
+                ctx.lineTo(nvCk.A[0], nvCk.A[1]);
+                ctx.lineTo(nvCk.C[0], nvCk.C[1]);
+                ctx.lineTo(nvCk.B[0], nvCk.B[1]);
+            } else {
+                ctx.lineTo(nv.pin[0], nv.pin[1]);
+                if (nv.t > 0) {
+                    if (nv.r === 0) ctx.lineTo(nv.pout[0], nv.pout[1]);
+                    else ctx.arcTo(nv.curr[0], nv.curr[1], nv.pout[0], nv.pout[1], nv.r);
+                }
             }
         }
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
@@ -2030,19 +2071,38 @@ function uShapeVerts(s) {
 
 function drawUShape(s, sel) {
     const verts = uShapeVerts(s);
+    const basePoly = uShapePolygon(s);
     const n = verts.length;
     const fill = sel ? 'rgba(201,168,76,0.12)' : 'rgba(218,230,248,0.88)';
 
-    // 1. Fill with corner treatments
+    // Per-vertex check data (A/B/C points). Check overrides corner treatment
+    // on the same vertex.
+    const checkAt = new Array(n).fill(null);
+    for (const c of (s.checks || [])) {
+        if (c.vertexIdx != null && c.vertexIdx >= 0 && c.vertexIdx < n) {
+            checkAt[c.vertexIdx] = cornerCheckPoints(basePoly, c.vertexIdx, c);
+        }
+    }
+    const startPt = checkAt[0] ? checkAt[0].B : verts[0].pout;
+
+    // 1. Fill with corner treatments (and carve out corner-check notches)
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(verts[0].pout[0], verts[0].pout[1]);
+    ctx.moveTo(startPt[0], startPt[1]);
     for (let i = 0; i < n; i++) {
-        const nv = verts[(i+1)%n];
-        ctx.lineTo(nv.pin[0], nv.pin[1]);
-        if (nv.t > 0) {
-            if (nv.r === 0) ctx.lineTo(nv.pout[0], nv.pout[1]);
-            else ctx.arcTo(nv.curr[0], nv.curr[1], nv.pout[0], nv.pout[1], nv.r);
+        const nextI = (i+1)%n;
+        const nv = verts[nextI];
+        const nvCk = checkAt[nextI];
+        if (nvCk) {
+            ctx.lineTo(nvCk.A[0], nvCk.A[1]);
+            ctx.lineTo(nvCk.C[0], nvCk.C[1]);
+            ctx.lineTo(nvCk.B[0], nvCk.B[1]);
+        } else {
+            ctx.lineTo(nv.pin[0], nv.pin[1]);
+            if (nv.t > 0) {
+                if (nv.r === 0) ctx.lineTo(nv.pout[0], nv.pout[1]);
+                else ctx.arcTo(nv.curr[0], nv.curr[1], nv.pout[0], nv.pout[1], nv.r);
+            }
         }
     }
     ctx.closePath();
@@ -2058,15 +2118,22 @@ function drawUShape(s, sel) {
         ctx.restore();
     }
 
-    // 2. Border — 8 sides with endpoints adjusted for corner treatments
+    // 2. Border — 8 sides with endpoints adjusted for corner treatments + checks
     const labels = U_SIDE_LABELS[s.uOpening || 'top'];
     for (let i = 0; i < n; i++) {
         const v = verts[i], nv = verts[(i+1)%n];
+        const vCk = checkAt[i], nvCk = checkAt[(i+1)%n];
         const key = `seg${i}`;
-        const sd = { x1: v.pout[0], y1: v.pout[1], x2: nv.pin[0], y2: nv.pin[1], label: labels[i], key };
+        const sd = {
+            x1: vCk  ? vCk.B[0]  : v.pout[0],
+            y1: vCk  ? vCk.B[1]  : v.pout[1],
+            x2: nvCk ? nvCk.A[0] : nv.pin[0],
+            y2: nvCk ? nvCk.A[1] : nv.pin[1],
+            label: labels[i], key
+        };
         drawPolyEdgeMaybeFS(s, sd, key, sel);
-        // Corner treatment rendering at nv
-        if (nv.t > 0) {
+        // Corner treatment rendering at nv — skipped when nv has a check
+        if (nv.t > 0 && !nvCk) {
             if (nv.r === 0) {
                 // Chamfer diagonal — selectable as diag_uc{index}
                 const diagStoreKey = `uc${(i+1)%n}`;
@@ -2132,6 +2199,14 @@ function drawUShape(s, sel) {
         }
     }
 
+    // 2b. Check notch inner walls (two perpendicular 'none' segments per notch)
+    for (let i = 0; i < n; i++) {
+        const c = checkAt[i];
+        if (!c) continue;
+        drawEdgeDatum({ type:'none' }, `uck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
+        drawEdgeDatum({ type:'none' }, `uck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
+    }
+
     // 3. Dimension lines — vertex to vertex
     const pts = uShapePolygon(s);
     for (let i=0;i<8;i++) {
@@ -2139,11 +2214,12 @@ function drawUShape(s, sel) {
         drawDimLine(pts[i][0],pts[i][1],pts[j][0],pts[j][1], Math.hypot(pts[j][0]-pts[i][0],pts[j][1]-pts[i][1]), s.id, `dim_u${i}`);
     }
 
-    // 4. Selection outline
+    // 4. Selection outline (follows the notched polygon)
     if (sel) {
         ctx.save(); ctx.strokeStyle='#b09030'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
-        ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
-        for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+        const polyOut = injectCornerChecks(basePoly, s.checks);
+        ctx.beginPath(); ctx.moveTo(polyOut[0][0], polyOut[0][1]);
+        for (let i=1;i<polyOut.length;i++) ctx.lineTo(polyOut[i][0], polyOut[i][1]);
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
     }
     drawFsOutlineLabel(s);
@@ -2814,32 +2890,37 @@ function render() {
         }
         ctx.restore();
     }
-    // When the Check tool is active, highlight each corner on every rect
-    // shape so the user can pick exactly which corner gets the notch.
+    // When the Check tool is active, highlight each convex corner on every
+    // shape so the user can pick which corner gets the notch.
     if (tool === 'check') {
         ctx.save();
+        const drawDot = (x, y) => {
+            ctx.beginPath();
+            ctx.arc(x, y, 12, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(176,144,48,0.35)';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#b09030';
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+        };
         for (const s of shapes) {
             if (s.subtype) continue;
-            if ((s.shapeType || 'rect') !== 'rect') continue;
-            const corners = [
-                { x: s.x,         y: s.y         },  // nw
-                { x: s.x + s.w,   y: s.y         },  // ne
-                { x: s.x + s.w,   y: s.y + s.h   },  // se
-                { x: s.x,         y: s.y + s.h   },  // sw
-            ];
-            for (const cn of corners) {
-                ctx.beginPath();
-                ctx.arc(cn.x, cn.y, 12, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(176,144,48,0.35)';
-                ctx.lineWidth = 2.5;
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(cn.x, cn.y, 5, 0, Math.PI * 2);
-                ctx.fillStyle = '#b09030';
-                ctx.fill();
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = '#ffffff';
-                ctx.stroke();
+            const st = s.shapeType || 'rect';
+            if (st === 'rect') {
+                drawDot(s.x,       s.y      );
+                drawDot(s.x + s.w, s.y      );
+                drawDot(s.x + s.w, s.y + s.h);
+                drawDot(s.x,       s.y + s.h);
+            } else if (st === 'l' || st === 'u') {
+                const poly = st === 'l' ? lShapePolygon(s) : uShapePolygon(s);
+                for (const i of convexVertexIndices(poly)) {
+                    drawDot(poly[i][0], poly[i][1]);
+                }
             }
         }
         ctx.restore();
@@ -2934,7 +3015,7 @@ function hideAllPopups() {
         document.getElementById(id).style.display = 'none');
     currentPopup = null; pendingPlace = null; pendingCorner = null;
     pendingEdge = null; pendingJointShape = null; pendingJointPos = null;
-    pendingCheckShape = null; pendingCheckCorner = null;
+    pendingCheckShape = null; pendingCheckCorner = null; pendingCheckVertex = null;
 }
 
 function screenPos(cvX, cvY) {
@@ -3445,6 +3526,7 @@ document.getElementById('joint-cancel').addEventListener('click', () => hideAllP
 // edge (top/bottom), d runs along the corner's vertical edge (left/right).
 let pendingCheckShape  = null;
 let pendingCheckCorner = null;
+let pendingCheckVertex = null;
 function showCheckPopup(cvX, cvY) {
     hideAllPopups();
     currentPopup = 'check';
@@ -3454,27 +3536,46 @@ function showCheckPopup(cvX, cvY) {
     setTimeout(() => { widthInp.focus(); widthInp.select(); }, 50);
 }
 function confirmCheckPopup() {
-    if (!pendingCheckShape || !pendingCheckCorner) { hideAllPopups(); return; }
+    if (!pendingCheckShape || (!pendingCheckCorner && pendingCheckVertex == null)) { hideAllPopups(); return; }
     const widthIn = Math.max(0.25, parseFloat(document.getElementById('check-width').value) || 4);
     const depthIn = Math.max(0.25, parseFloat(document.getElementById('check-depth').value) || 4);
     const s = pendingCheckShape;
-    const cornerKey = pendingCheckCorner;
     const wPx = widthIn * INCH, dPx = depthIn * INCH;
 
-    if (wPx >= s.w - 0.5) { alert(`Width ${widthIn}" is as wide as the piece (${(s.w/INCH).toFixed(2)}"). Reduce width.`); return; }
-    if (dPx >= s.h - 0.5) { alert(`Depth ${depthIn}" is as tall as the piece (${(s.h/INCH).toFixed(2)}"). Reduce depth.`); return; }
+    // For rect, W is along horizontal edge (compared to s.w) and D is vertical (s.h).
+    // For L/U, W/D are along the two adjacent polygon edges at the chosen vertex.
+    const st = s.shapeType || 'rect';
+    if (st === 'rect') {
+        if (wPx >= s.w - 0.5) { alert(`Width ${widthIn}" is as wide as the piece (${(s.w/INCH).toFixed(2)}"). Reduce width.`); return; }
+        if (dPx >= s.h - 0.5) { alert(`Depth ${depthIn}" is as tall as the piece (${(s.h/INCH).toFixed(2)}"). Reduce depth.`); return; }
+    } else if (st === 'l' || st === 'u') {
+        const poly = st === 'l' ? lShapePolygon(s) : uShapePolygon(s);
+        const n = poly.length;
+        const i = pendingCheckVertex;
+        const P = poly[(i - 1 + n) % n];
+        const V = poly[i];
+        const N = poly[(i + 1) % n];
+        const inLen = Math.hypot(V[0]-P[0], V[1]-P[1]);
+        const outLen = Math.hypot(N[0]-V[0], N[1]-V[1]);
+        if (wPx >= inLen - 0.5)  { alert(`Width ${widthIn}" is too large for this edge (${(inLen/INCH).toFixed(2)}"). Reduce width.`); return; }
+        if (dPx >= outLen - 0.5) { alert(`Depth ${depthIn}" is too large for the adjacent edge (${(outLen/INCH).toFixed(2)}"). Reduce depth.`); return; }
+    }
 
-    // Replace any existing check on the same corner (one notch per corner)
     if (!s.checks) s.checks = [];
     pushUndo();
-    s.checks = s.checks.filter(c => c.cornerKey !== cornerKey);
-    s.checks.push({ id: Date.now(), cornerKey, w: wPx, d: dPx });
-    pendingCheckShape = null; pendingCheckCorner = null;
+    if (st === 'rect') {
+        s.checks = s.checks.filter(c => c.cornerKey !== pendingCheckCorner);
+        s.checks.push({ id: Date.now(), cornerKey: pendingCheckCorner, w: wPx, d: dPx });
+    } else {
+        s.checks = s.checks.filter(c => c.vertexIdx !== pendingCheckVertex);
+        s.checks.push({ id: Date.now(), vertexIdx: pendingCheckVertex, w: wPx, d: dPx });
+    }
+    pendingCheckShape = null; pendingCheckCorner = null; pendingCheckVertex = null; pendingCheckVertex = null;
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('check-ok').addEventListener('click', confirmCheckPopup);
 document.getElementById('check-cancel').addEventListener('click', () => {
-    pendingCheckShape = null; pendingCheckCorner = null;
+    pendingCheckShape = null; pendingCheckCorner = null; pendingCheckVertex = null;
     hideAllPopups();
 });
 document.getElementById('check-width').addEventListener('keydown', e => {
@@ -4296,30 +4397,39 @@ cv.addEventListener('mousedown', e => {
     // ── Check (rectangular notch at a corner) ──
     if (tool === 'check') {
         const SNAP = 40;
-        let best = { dist: SNAP, s: null, cornerKey: null, cx: 0, cy: 0 };
+        let best = { dist: SNAP, s: null, cornerKey: null, vertexIdx: null, cx: 0, cy: 0 };
         for (const s of shapes) {
             if (s.subtype) continue;
-            if ((s.shapeType || 'rect') !== 'rect') continue;
-            const corners = [
-                { key:'nw', x: s.x,       y: s.y       },
-                { key:'ne', x: s.x + s.w, y: s.y       },
-                { key:'se', x: s.x + s.w, y: s.y + s.h },
-                { key:'sw', x: s.x,       y: s.y + s.h },
-            ];
-            for (const cn of corners) {
-                const d = Math.hypot(p.x - cn.x, p.y - cn.y);
-                if (d < best.dist) best = { dist: d, s, cornerKey: cn.key, cx: cn.x, cy: cn.y };
+            const st = s.shapeType || 'rect';
+            if (st === 'rect') {
+                const corners = [
+                    { key:'nw', x: s.x,       y: s.y       },
+                    { key:'ne', x: s.x + s.w, y: s.y       },
+                    { key:'se', x: s.x + s.w, y: s.y + s.h },
+                    { key:'sw', x: s.x,       y: s.y + s.h },
+                ];
+                for (const cn of corners) {
+                    const d = Math.hypot(p.x - cn.x, p.y - cn.y);
+                    if (d < best.dist) best = { dist: d, s, cornerKey: cn.key, vertexIdx: null, cx: cn.x, cy: cn.y };
+                }
+            } else if (st === 'l' || st === 'u') {
+                const poly = st === 'l' ? lShapePolygon(s) : uShapePolygon(s);
+                for (const i of convexVertexIndices(poly)) {
+                    const d = Math.hypot(p.x - poly[i][0], p.y - poly[i][1]);
+                    if (d < best.dist) best = { dist: d, s, cornerKey: null, vertexIdx: i, cx: poly[i][0], cy: poly[i][1] };
+                }
             }
         }
         if (!best.s) {
-            alert('Click near a corner of a rectangle piece to place a check.');
+            alert('Click near a convex corner of a piece to place a check.');
             return;
         }
         // showCheckPopup calls hideAllPopups() which wipes pendingCheck*,
         // so set them AFTER opening the popup.
         showCheckPopup(best.cx, best.cy);
-        pendingCheckShape  = best.s;
-        pendingCheckCorner = best.cornerKey;
+        pendingCheckShape   = best.s;
+        pendingCheckCorner  = best.cornerKey;
+        pendingCheckVertex  = best.vertexIdx;
         return;
     }
 
@@ -6890,11 +7000,66 @@ function buildRectPolyWithChecks(s) {
     return out;
 }
 
+// Indices of convex vertices on a CW polygon (in screen coords, y-down).
+// These are the corners that can take a rectangular check notch.
+function convexVertexIndices(poly) {
+    const out = [];
+    const n = poly.length;
+    for (let i = 0; i < n; i++) {
+        const P = poly[(i - 1 + n) % n];
+        const V = poly[i];
+        const N = poly[(i + 1) % n];
+        const inx = V[0] - P[0], iny = V[1] - P[1];
+        const outx = N[0] - V[0], outy = N[1] - V[1];
+        if (inx * outy - iny * outx > 0) out.push(i);
+    }
+    return out;
+}
+
+// Compute A (entry on incoming edge), B (exit on outgoing edge), and C
+// (interior corner) for a rectangular notch cut at polygon vertex i.
+function cornerCheckPoints(basePoly, i, check) {
+    const n = basePoly.length;
+    const P = basePoly[(i - 1 + n) % n];
+    const V = basePoly[i];
+    const N = basePoly[(i + 1) % n];
+    const inLen = Math.hypot(V[0] - P[0], V[1] - P[1]);
+    const outLen = Math.hypot(N[0] - V[0], N[1] - V[1]);
+    if (inLen < 1 || outLen < 1) return null;
+    const W = Math.min(check.w, inLen - 0.5);
+    const D = Math.min(check.d, outLen - 0.5);
+    const inDx = (V[0] - P[0]) / inLen, inDy = (V[1] - P[1]) / inLen;
+    const outDx = (N[0] - V[0]) / outLen, outDy = (N[1] - V[1]) / outLen;
+    const A = [V[0] - W * inDx,              V[1] - W * inDy];
+    const B = [V[0] + D * outDx,             V[1] + D * outDy];
+    const C = [V[0] - W * inDx + D * outDx,  V[1] - W * inDy + D * outDy];
+    return { A, B, C };
+}
+
+// Inject corner-check notches into a general polygon (for L/U shapes).
+// Each check has { vertexIdx, w, d } keyed by its polygon index.
+function injectCornerChecks(poly, checks) {
+    const byIdx = new Map();
+    for (const c of (checks || [])) {
+        if (c.vertexIdx != null) byIdx.set(c.vertexIdx, c);
+    }
+    if (byIdx.size === 0) return poly.slice();
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+        const c = byIdx.get(i);
+        if (!c) { out.push(poly[i]); continue; }
+        const pts = cornerCheckPoints(poly, i, c);
+        if (!pts) { out.push(poly[i]); continue; }
+        out.push(pts.A, pts.C, pts.B);
+    }
+    return out;
+}
+
 function shapeLocalPolyInches(s) {
     const st = s.shapeType || 'rect';
     const toLocal = pts => pts.map(([x,y]) => [(x - s.x)/INCH, (y - s.y)/INCH]);
-    if (st === 'l')   return injectFsNotchInchesLocal(toLocal(lShapePolygon(s)), s);
-    if (st === 'u')   return injectFsNotchInchesLocal(toLocal(uShapePolygon(s)), s);
+    if (st === 'l')   return injectFsNotchInchesLocal(toLocal(injectCornerChecks(lShapePolygon(s), s.checks)), s);
+    if (st === 'u')   return injectFsNotchInchesLocal(toLocal(injectCornerChecks(uShapePolygon(s), s.checks)), s);
     if (st === 'bsp') return toLocal(bspPolygon(s));
     if (st === 'circle') {
         // 32-point polygon approximation of the circle for kerf/collision
