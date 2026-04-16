@@ -746,6 +746,27 @@ const L_CORNER_LABELS = {
     se: ['NW','NE','Step Right','Inner','Step Bot','SW'],
     sw: ['NW','NE','SE','Step Bot','Inner','Step Left'],
 };
+// Physical role of each polygon vertex index, keyed by notchCorner.
+// Used to remap corner-check vertexIdx when the L-shape rotates.
+const L_ROLES = {
+    ne: ['NW','StepTop','Inner','StepRight','SE','SW'],
+    se: ['NW','NE','StepRight','Inner','StepBot','SW'],
+    sw: ['NW','NE','SE','StepBot','Inner','StepLeft'],
+    nw: ['StepTop','NE','SE','SW','StepLeft','Inner'],
+};
+// How each role rotates under a 90° CW shape rotation.
+const L_ROLE_ROT_CW = {
+    NW:'NE', NE:'SE', SE:'SW', SW:'NW',
+    StepTop:'StepRight', StepRight:'StepBot', StepBot:'StepLeft', StepLeft:'StepTop',
+    Inner:'Inner',
+};
+function lVertexIdxAfterRotationCW(oldNotchCorner, oldIdx, newNotchCorner) {
+    const oldRole = L_ROLES[oldNotchCorner]?.[oldIdx];
+    if (!oldRole) return oldIdx;
+    const newRole = L_ROLE_ROT_CW[oldRole] || oldRole;
+    const newIdx = L_ROLES[newNotchCorner]?.indexOf(newRole);
+    return newIdx >= 0 ? newIdx : oldIdx;
+}
 function lShapeSides(s) {
     const pts = lShapePolygon(s);
     const labels = L_SIDE_LABELS[s.notchCorner || 'ne'];
@@ -4820,11 +4841,23 @@ document.addEventListener('keydown', e => {
         if (s) {
             e.preventDefault(); pushUndo();
             if (s.shapeType === 'l') {
+                const oldNotch = s.notchCorner || 'ne';
                 const cycle = { ne:'se', se:'sw', sw:'nw', nw:'ne' };
-                s.notchCorner = cycle[s.notchCorner || 'ne'] || 'se';
+                const newNotch = cycle[oldNotch] || 'se';
+                // Remap check vertex indices for the new polygon layout
+                if (s.checks && s.checks.length) {
+                    for (const c of s.checks) {
+                        if (c.vertexIdx != null) {
+                            c.vertexIdx = lVertexIdxAfterRotationCW(oldNotch, c.vertexIdx, newNotch);
+                        }
+                    }
+                }
+                s.notchCorner = newNotch;
                 const oldW = s.w, oldH = s.h, oldNW = s.notchW, oldNH = s.notchH;
                 s.w = oldH; s.h = oldW; s.notchW = oldNH; s.notchH = oldNW;
             } else if (s.shapeType === 'u') {
+                // U polygon vertex indices are stable across uOpening rotations,
+                // so s.checks[].vertexIdx stays unchanged.
                 const cycle = { top:'right', right:'bottom', bottom:'left', left:'top' };
                 s.uOpening = cycle[s.uOpening || 'top'] || 'right';
                 const oldW = s.w, oldH = s.h, oldLW = s.leftW, oldRW = s.rightW, oldCH = s.channelH;
@@ -4832,7 +4865,18 @@ document.addEventListener('keydown', e => {
             } else if (s.shapeType === 'circle') {
                 // No change — circles are symmetric
             } else {
-                // Rectangles, BSP, sinks, cooktops — swap w and h
+                // Rect / BSP / sinks / cooktops — swap w and h.
+                // Rect corner checks: cycle cornerKey CW and swap w↔d so the
+                // physical notch rotates with the piece.
+                if (s.checks && s.checks.length && (s.shapeType || 'rect') === 'rect') {
+                    const cyc = { nw:'ne', ne:'se', se:'sw', sw:'nw' };
+                    for (const c of s.checks) {
+                        if (c.cornerKey) {
+                            c.cornerKey = cyc[c.cornerKey] || c.cornerKey;
+                            const ow = c.w; c.w = c.d; c.d = ow;
+                        }
+                    }
+                }
                 const oldW = s.w; s.w = s.h; s.h = oldW;
             }
             // Keep shape within canvas
