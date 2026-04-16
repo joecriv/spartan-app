@@ -2352,6 +2352,33 @@ function drawShape(s, sel) {
         { key:'bottom', x1:s.x+s.w-seB,y1:s.y+s.h,      x2:s.x+swA,      y2:s.y+s.h    },
         { key:'left',   x1:s.x,         y1:s.y+s.h-swB,  x2:s.x,          y2:s.y+nwB    },
     ];
+    // When a check notch reaches a corner, the adjacent edge would draw
+    // straight through the carved area (phantom line). Truncate the adjacent
+    // edge by the check's depth so the border follows the true outline.
+    if (hasChecks && (s.shapeType || 'rect') === 'rect') {
+        const epsCk = 0.5;
+        const ins = { top_s:0, top_e:0, right_s:0, right_e:0, bottom_s:0, bottom_e:0, left_s:0, left_e:0 };
+        for (const c of s.checks) {
+            const half = c.w / 2;
+            if (c.edgeKey === 'top') {
+                if (c.cx - half <= epsCk)        ins.left_e  = Math.max(ins.left_e,  c.d);
+                if (c.cx + half >= s.w - epsCk)  ins.right_s = Math.max(ins.right_s, c.d);
+            } else if (c.edgeKey === 'right') {
+                if (c.cx - half <= epsCk)        ins.top_e   = Math.max(ins.top_e,   c.d);
+                if (c.cx + half >= s.h - epsCk)  ins.bottom_s= Math.max(ins.bottom_s,c.d);
+            } else if (c.edgeKey === 'bottom') {
+                if (c.cx + half >= s.w - epsCk)  ins.right_e = Math.max(ins.right_e, c.d);
+                if (c.cx - half <= epsCk)        ins.left_s  = Math.max(ins.left_s,  c.d);
+            } else if (c.edgeKey === 'left') {
+                if (c.cx + half >= s.h - epsCk)  ins.bottom_e= Math.max(ins.bottom_e,c.d);
+                if (c.cx - half <= epsCk)        ins.top_s   = Math.max(ins.top_s,   c.d);
+            }
+        }
+        sides[0].x1 += ins.top_s;     sides[0].x2 -= ins.top_e;
+        sides[1].y1 += ins.right_s;   sides[1].y2 -= ins.right_e;
+        sides[2].x1 -= ins.bottom_s;  sides[2].x2 += ins.bottom_e;
+        sides[3].y1 -= ins.left_s;    sides[3].y2 += ins.left_e;
+    }
     for (const sd of sides) {
         const edgeData = s.edges?.[sd.key];
         // Skip the cutout span on the FS edge — draw left/right pieces with their own profiles
