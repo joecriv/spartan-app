@@ -8056,46 +8056,78 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
                 for (let i = 1; i < pts.length; i++) ctx.lineTo(px + pts[i][0]*sc, py + pts[i][1]*sc);
                 ctx.closePath();
             } else if (shapeType === 'l' && shape && p.ref.segIdx == null) {
-                // Full L-shape — lShapeVerts for exact corner/chamfer treatment
+                // Full L-shape — lShapeVerts for exact corner/chamfer treatment,
+                // with corner checks (A→C→B) replacing treatment at notched verts.
                 const verts = lShapeVerts(shape);
+                const basePoly = lShapePolygon(shape);
                 const n = verts.length;
-                const v0 = convAbs(verts[0].pout);
+                const checkAt = new Array(n).fill(null);
+                for (const c of (shape.checks || [])) {
+                    if (c.vertexIdx != null && c.vertexIdx >= 0 && c.vertexIdx < n) {
+                        checkAt[c.vertexIdx] = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    }
+                }
+                const v0 = convAbs(checkAt[0] ? checkAt[0].B : verts[0].pout);
                 ctx.moveTo(v0[0], v0[1]);
                 for (let i = 0; i < n; i++) {
-                    const nv = verts[(i+1)%n];
-                    const pin = convAbs(nv.pin);
-                    ctx.lineTo(pin[0], pin[1]);
-                    if (nv.t > 0) {
-                        if (nv.r === 0) {
-                            const pout = convAbs(nv.pout);
-                            ctx.lineTo(pout[0], pout[1]);
-                        } else {
-                            const curr = convAbs(nv.curr);
-                            const pout = convAbs(nv.pout);
-                            ctx.arcTo(curr[0], curr[1], pout[0], pout[1], nv.r / INCH * sc);
+                    const nextI = (i+1)%n;
+                    const nv = verts[nextI];
+                    const nvCk = checkAt[nextI];
+                    if (nvCk) {
+                        const A = convAbs(nvCk.A), C = convAbs(nvCk.C), B = convAbs(nvCk.B);
+                        ctx.lineTo(A[0], A[1]);
+                        ctx.lineTo(C[0], C[1]);
+                        ctx.lineTo(B[0], B[1]);
+                    } else {
+                        const pin = convAbs(nv.pin);
+                        ctx.lineTo(pin[0], pin[1]);
+                        if (nv.t > 0) {
+                            if (nv.r === 0) {
+                                const pout = convAbs(nv.pout);
+                                ctx.lineTo(pout[0], pout[1]);
+                            } else {
+                                const curr = convAbs(nv.curr);
+                                const pout = convAbs(nv.pout);
+                                ctx.arcTo(curr[0], curr[1], pout[0], pout[1], nv.r / INCH * sc);
+                            }
                         }
                     }
                 }
                 ctx.closePath();
             } else if (shapeType === 'u' && shape && p.ref.segIdx == null) {
-                // Mirror L-shape: use vertex data with corner treatments so
-                // radius arcs and chamfers render on the slab layout.
+                // Mirror L-shape: verts with corner treatments + check notches
                 const verts = uShapeVerts(shape);
+                const basePoly = uShapePolygon(shape);
                 const n = verts.length;
-                const v0p = convAbs(verts[0].pout);
+                const checkAt = new Array(n).fill(null);
+                for (const c of (shape.checks || [])) {
+                    if (c.vertexIdx != null && c.vertexIdx >= 0 && c.vertexIdx < n) {
+                        checkAt[c.vertexIdx] = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    }
+                }
+                const v0p = convAbs(checkAt[0] ? checkAt[0].B : verts[0].pout);
                 ctx.moveTo(v0p[0], v0p[1]);
                 for (let i = 0; i < n; i++) {
-                    const nv = verts[(i+1)%n];
-                    const pinC = convAbs(nv.pin);
-                    ctx.lineTo(pinC[0], pinC[1]);
-                    if (nv.t > 0) {
-                        if (nv.r === 0) {
-                            const poutC = convAbs(nv.pout);
-                            ctx.lineTo(poutC[0], poutC[1]);
-                        } else {
-                            const currC = convAbs(nv.curr);
-                            const poutC = convAbs(nv.pout);
-                            ctx.arcTo(currC[0], currC[1], poutC[0], poutC[1], nv.r / INCH * sc);
+                    const nextI = (i+1)%n;
+                    const nv = verts[nextI];
+                    const nvCk = checkAt[nextI];
+                    if (nvCk) {
+                        const A = convAbs(nvCk.A), C = convAbs(nvCk.C), B = convAbs(nvCk.B);
+                        ctx.lineTo(A[0], A[1]);
+                        ctx.lineTo(C[0], C[1]);
+                        ctx.lineTo(B[0], B[1]);
+                    } else {
+                        const pinC = convAbs(nv.pin);
+                        ctx.lineTo(pinC[0], pinC[1]);
+                        if (nv.t > 0) {
+                            if (nv.r === 0) {
+                                const poutC = convAbs(nv.pout);
+                                ctx.lineTo(poutC[0], poutC[1]);
+                            } else {
+                                const currC = convAbs(nv.curr);
+                                const poutC = convAbs(nv.pout);
+                                ctx.arcTo(currC[0], currC[1], poutC[0], poutC[1], nv.r / INCH * sc);
+                            }
                         }
                     }
                 }
@@ -8109,8 +8141,10 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
             } else if (shapeType === 'circle') {
                 const r = pxw / 2;
                 ctx.arc(px + r, py + r, r, 0, Math.PI * 2);
-            } else if (shape && shape.farmSink && p.ref.segIdx == null) {
-                // Rect with farmhouse sink — use polygon path with rotation
+            } else if (shape && p.ref.segIdx == null && (shape.farmSink || (shape.checks || []).length > 0)) {
+                // Rect with farmhouse sink OR corner-check notches — use
+                // shapeLocalPolyInches so the piece outline matches the
+                // true cut shape.
                 const poly = shapeLocalPolyInches(shape);
                 const pts = poly.map(([lx, ly]) => {
                     switch(rot) {
@@ -10671,14 +10705,18 @@ function kitBuildPath(ctx, p, px, py, sc, rotOverride) {
         for(let i=1;i<pts.length;i++) ctx.lineTo(px+pts[i][0]*sc,py+pts[i][1]*sc);
         ctx.closePath();
     } else if (st==='l'&&shape&&p.ref.segIdx==null) {
-        const verts=lShapeVerts(shape),n=verts.length;
-        const v0=convAbs(verts[0].pout); ctx.moveTo(v0[0],v0[1]);
-        for(let i=0;i<n;i++){const nv=verts[(i+1)%n],pin=convAbs(nv.pin);ctx.lineTo(pin[0],pin[1]);if(nv.t>0){if(nv.r===0){const po=convAbs(nv.pout);ctx.lineTo(po[0],po[1]);}else{const cu=convAbs(nv.curr),po=convAbs(nv.pout);ctx.arcTo(cu[0],cu[1],po[0],po[1],nv.r/INCH*sc);}}}
+        const verts=lShapeVerts(shape),basePoly=lShapePolygon(shape),n=verts.length;
+        const checkAt=new Array(n).fill(null);
+        for(const c of (shape.checks||[])){if(c.vertexIdx!=null&&c.vertexIdx>=0&&c.vertexIdx<n)checkAt[c.vertexIdx]=cornerCheckPoints(basePoly,c.vertexIdx,c);}
+        const v0=convAbs(checkAt[0]?checkAt[0].B:verts[0].pout); ctx.moveTo(v0[0],v0[1]);
+        for(let i=0;i<n;i++){const nextI=(i+1)%n,nv=verts[nextI],nvCk=checkAt[nextI];if(nvCk){const A=convAbs(nvCk.A),C=convAbs(nvCk.C),B=convAbs(nvCk.B);ctx.lineTo(A[0],A[1]);ctx.lineTo(C[0],C[1]);ctx.lineTo(B[0],B[1]);}else{const pin=convAbs(nv.pin);ctx.lineTo(pin[0],pin[1]);if(nv.t>0){if(nv.r===0){const po=convAbs(nv.pout);ctx.lineTo(po[0],po[1]);}else{const cu=convAbs(nv.curr),po=convAbs(nv.pout);ctx.arcTo(cu[0],cu[1],po[0],po[1],nv.r/INCH*sc);}}}}
         ctx.closePath();
     } else if (st==='u'&&shape&&p.ref.segIdx==null) {
-        const verts=uShapeVerts(shape),n=verts.length;
-        const v0=convAbs(verts[0].pout); ctx.moveTo(v0[0],v0[1]);
-        for(let i=0;i<n;i++){const nv=verts[(i+1)%n],pin=convAbs(nv.pin);ctx.lineTo(pin[0],pin[1]);if(nv.t>0){if(nv.r===0){const po=convAbs(nv.pout);ctx.lineTo(po[0],po[1]);}else{const cu=convAbs(nv.curr),po=convAbs(nv.pout);ctx.arcTo(cu[0],cu[1],po[0],po[1],nv.r/INCH*sc);}}}
+        const verts=uShapeVerts(shape),basePoly=uShapePolygon(shape),n=verts.length;
+        const checkAt=new Array(n).fill(null);
+        for(const c of (shape.checks||[])){if(c.vertexIdx!=null&&c.vertexIdx>=0&&c.vertexIdx<n)checkAt[c.vertexIdx]=cornerCheckPoints(basePoly,c.vertexIdx,c);}
+        const v0=convAbs(checkAt[0]?checkAt[0].B:verts[0].pout); ctx.moveTo(v0[0],v0[1]);
+        for(let i=0;i<n;i++){const nextI=(i+1)%n,nv=verts[nextI],nvCk=checkAt[nextI];if(nvCk){const A=convAbs(nvCk.A),C=convAbs(nvCk.C),B=convAbs(nvCk.B);ctx.lineTo(A[0],A[1]);ctx.lineTo(C[0],C[1]);ctx.lineTo(B[0],B[1]);}else{const pin=convAbs(nv.pin);ctx.lineTo(pin[0],pin[1]);if(nv.t>0){if(nv.r===0){const po=convAbs(nv.pout);ctx.lineTo(po[0],po[1]);}else{const cu=convAbs(nv.curr),po=convAbs(nv.pout);ctx.arcTo(cu[0],cu[1],po[0],po[1],nv.r/INCH*sc);}}}}
         ctx.closePath();
     } else if (st==='bsp'&&shape&&p.ref.segIdx==null) {
         const pts=bspPolygon(shape),f=convAbs(pts[0]);ctx.moveTo(f[0],f[1]);
@@ -10686,6 +10724,13 @@ function kitBuildPath(ctx, p, px, py, sc, rotOverride) {
         ctx.closePath();
     } else if (st==='circle') {
         const{w:ppw}=slabGetPieceWH(p.ref,rot);const r=ppw*sc/2;ctx.arc(px+r,py+r,r,0,Math.PI*2);
+    } else if (shape&&p.ref.segIdx==null&&(shape.farmSink||(shape.checks||[]).length>0)) {
+        // Rect with farm sink OR corner checks — use the notched polygon
+        const poly=shapeLocalPolyInches(shape);
+        const pts=poly.map(([lx,ly])=>{switch(rot){case 1:return[hi_in-ly,lx];case 2:return[wi_in-lx,hi_in-ly];case 3:return[ly,wi_in-lx];default:return[lx,ly];}});
+        ctx.moveTo(px+pts[0][0]*sc,py+pts[0][1]*sc);
+        for(let i=1;i<pts.length;i++)ctx.lineTo(px+pts[i][0]*sc,py+pts[i][1]*sc);
+        ctx.closePath();
     } else {
         const r=shape?shapeRadii(shape):{nw:0,ne:0,se:0,sw:0};
         const ch=shape?shapeChamfers(shape):{nw:0,ne:0,se:0,sw:0};
