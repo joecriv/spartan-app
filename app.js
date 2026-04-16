@@ -361,6 +361,7 @@ function normalizeShape(s) {
         joints:    (s.joints   || []).map(j => ({ ...j })),
         cornerEdges: s.cornerEdges || {nw:{type:'none'},ne:{type:'none'},se:{type:'none'},sw:{type:'none'}},
         farmSink:  s.farmSink  || null, // { edge:'top'|'bottom', cx: <px from shape.x> }
+        checks:    (s.checks   || []).map(c => ({ ...c })), // rectangular notches
     };
     if (base.shapeType === 'l') {
         base.notchW      = s.notchW      || 0;
@@ -2318,6 +2319,52 @@ function drawShape(s, sel) {
         ctx.restore();
     }
 
+    // Carve out each "check" (rectangular notch) — filled white, with a
+    // 3-segment border (into + across + out) drawn in the piece's normal edge
+    // color so the notch reads as cut-out rather than floating.
+    if (s.checks && s.checks.length) {
+        for (const c of s.checks) {
+            const rect = checkRectAbs(s, c);
+            if (!rect) continue;
+            ctx.save();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+            // Inner U outline for the notch
+            ctx.strokeStyle = sel ? '#b09030' : '#222';
+            ctx.lineWidth = sel ? 2 : 1;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            if (c.edgeKey === 'top') {
+                ctx.moveTo(rect.x,          rect.y);
+                ctx.lineTo(rect.x,          rect.y + rect.h);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+                ctx.lineTo(rect.x + rect.w, rect.y);
+            } else if (c.edgeKey === 'bottom') {
+                ctx.moveTo(rect.x,          rect.y + rect.h);
+                ctx.lineTo(rect.x,          rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+            } else if (c.edgeKey === 'left') {
+                ctx.moveTo(rect.x,          rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+                ctx.lineTo(rect.x,          rect.y + rect.h);
+            } else if (c.edgeKey === 'right') {
+                ctx.moveTo(rect.x + rect.w, rect.y);
+                ctx.lineTo(rect.x,          rect.y);
+                ctx.lineTo(rect.x,          rect.y + rect.h);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+            }
+            ctx.stroke();
+            // "CHK" label inside the notch
+            ctx.font = 'bold 8px Raleway,sans-serif';
+            ctx.fillStyle = '#888';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('CHK', rect.x + rect.w/2, rect.y + rect.h/2);
+            ctx.restore();
+        }
+    }
+
     // 2. Border — each side drawn with its profile
     // A = along first incoming side, B = along outgoing side (0 = goes all the way to corner)
     const nwA = ch.nw > 0 ? ch.nw : r.nw,  nwB = ch.nw > 0 ? chB.nw : r.nw;
@@ -3340,6 +3387,83 @@ function confirmJointPopup() {
 document.getElementById('joint-ok').addEventListener('click', confirmJointPopup);
 document.getElementById('joint-cancel').addEventListener('click', () => hideAllPopups());
 
+// ── Check (notch) popup ──────────────────────────────────────
+// A "check" is a rectangular notch carved from an edge of a piece, used
+// to accommodate wall obstructions, columns, posts, etc. Stored on the shape
+// as s.checks = [{ id, edgeKey, cx, w, d }] where all offsets are in pixels
+// and edgeKey is 'top'/'right'/'bottom'/'left' for rect shapes.
+let pendingCheckShape = null;
+let pendingCheckEdge  = null;
+let pendingCheckClick = null;
+function showCheckPopup(cvX, cvY) {
+    hideAllPopups();
+    currentPopup = 'check';
+    const sp = screenPos(cvX, cvY);
+    showPopupAt(document.getElementById('check-popup'), sp.x + 20, sp.y - 20);
+    const widthInp = document.getElementById('check-width');
+    setTimeout(() => { widthInp.focus(); widthInp.select(); }, 50);
+}
+function confirmCheckPopup() {
+    if (!pendingCheckShape || !pendingCheckEdge || !pendingCheckClick) { hideAllPopups(); return; }
+    const widthIn = Math.max(0.25, parseFloat(document.getElementById('check-width').value) || 4);
+    const depthIn = Math.max(0.25, parseFloat(document.getElementById('check-depth').value) || 4);
+    const s = pendingCheckShape;
+    const edgeKey = pendingCheckEdge;
+    const wPx = widthIn * INCH, dPx = depthIn * INCH;
+
+    // Determine along-edge center (cx) clamped so the check stays entirely on the edge
+    let cx;
+    if (edgeKey === 'top' || edgeKey === 'bottom') {
+        cx = pendingCheckClick.x - s.x;
+        cx = Math.max(wPx/2, Math.min(s.w - wPx/2, cx));
+        if (dPx > s.h - 0.5) { alert(`Depth ${depthIn}" is deeper than the piece (${(s.h/INCH).toFixed(2)}"). Reduce depth.`); return; }
+    } else {
+        cx = pendingCheckClick.y - s.y;
+        cx = Math.max(wPx/2, Math.min(s.h - wPx/2, cx));
+        if (dPx > s.w - 0.5) { alert(`Depth ${depthIn}" is deeper than the piece (${(s.w/INCH).toFixed(2)}"). Reduce depth.`); return; }
+    }
+    if (wPx > (edgeKey === 'top' || edgeKey === 'bottom' ? s.w : s.h) - 0.5) {
+        alert(`Width ${widthIn}" is wider than the edge. Reduce width.`); return;
+    }
+
+    pushUndo();
+    if (!s.checks) s.checks = [];
+    s.checks.push({ id: Date.now(), edgeKey, cx, w: wPx, d: dPx });
+    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
+    persist(); hideAllPopups(); setTool('select'); render();
+}
+document.getElementById('check-ok').addEventListener('click', confirmCheckPopup);
+document.getElementById('check-cancel').addEventListener('click', () => {
+    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
+    hideAllPopups();
+});
+document.getElementById('check-width').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmCheckPopup(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    e.stopPropagation();
+});
+document.getElementById('check-depth').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmCheckPopup(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    e.stopPropagation();
+});
+
+// Sum of all check (notch) areas on a shape, in pixels². Subtracted from the
+// shape's gross area for sqft calculations and cutting cost.
+function totalCheckAreaPx(s) {
+    if (!s.checks || !s.checks.length) return 0;
+    return s.checks.reduce((a, c) => a + c.w * c.d, 0);
+}
+
+// Returns absolute canvas rect {x, y, w, h} for a check on a rect shape.
+function checkRectAbs(s, c) {
+    if (c.edgeKey === 'top')    return { x: s.x + c.cx - c.w/2, y: s.y,                w: c.w, h: c.d };
+    if (c.edgeKey === 'bottom') return { x: s.x + c.cx - c.w/2, y: s.y + s.h - c.d,    w: c.w, h: c.d };
+    if (c.edgeKey === 'left')   return { x: s.x,                y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
+    if (c.edgeKey === 'right')  return { x: s.x + s.w - c.d,    y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
+    return null;
+}
+
 // ── L-Shape popup ────────────────────────────────────────────
 let lshapeCorner    = 'ne';
 let editingLShapeId = null;
@@ -4129,6 +4253,29 @@ cv.addEventListener('mousedown', e => {
         render(); return;
     }
 
+    // ── Check (rectangular notch on an edge) ──
+    if (tool === 'check') {
+        const eh = nearestEdge(p.x, p.y);
+        if (!eh || eh.s.subtype) {
+            alert('Click on an edge of a piece to place a check.');
+            return;
+        }
+        if ((eh.s.shapeType || 'rect') !== 'rect') {
+            alert('Check tool currently supports rectangle pieces. L/U/BSP support coming soon.');
+            return;
+        }
+        // 4 possible edges on a rect: top, right, bottom, left
+        if (!['top','right','bottom','left'].includes(eh.key)) {
+            alert('Click on a main edge of the rectangle.');
+            return;
+        }
+        pendingCheckShape = eh.s;
+        pendingCheckEdge  = eh.key;
+        pendingCheckClick = { x: p.x, y: p.y };
+        showCheckPopup(p.x, p.y);
+        return;
+    }
+
     // ── Joint ──
     if (tool === 'joint') {
         // Drag existing joint?
@@ -4604,7 +4751,7 @@ document.getElementById('text-content').addEventListener('keydown', e => {
 });
 
 // ─────────────────────────────────────────────────────────────
-const TOOL_BTNS = { draw:'btn-draw', ldraw:'btn-ldraw', udraw:'btn-udraw', bsp:'btn-bsp', circle:'btn-circle', select:'btn-select', radius:'btn-radius', edge:'btn-edge', splitedge:'btn-splitedge', joint:'btn-joint', sink:'btn-sink', farmsink:'btn-farmsink', cooktop:'btn-cooktop', outlet:'btn-outlet', bocci:'btn-bocci', text:'btn-text', measure:'btn-measure' };
+const TOOL_BTNS = { draw:'btn-draw', ldraw:'btn-ldraw', udraw:'btn-udraw', bsp:'btn-bsp', circle:'btn-circle', select:'btn-select', radius:'btn-radius', edge:'btn-edge', splitedge:'btn-splitedge', joint:'btn-joint', check:'btn-check', sink:'btn-sink', farmsink:'btn-farmsink', cooktop:'btn-cooktop', outlet:'btn-outlet', bocci:'btn-bocci', text:'btn-text', measure:'btn-measure' };
 function setTool(t) {
     ghostText = null; // cancel any floating text
     measurePt1 = null; measureHover = null;
@@ -4612,10 +4759,10 @@ function setTool(t) {
     drawing = false; moving = false; resizing = false; edgeResizing = null; draggingJoint = false; jointSnapCorner = null;
     hovCorner = null; hovEdge = null; hovCornerEdge = null;
     selectedText = null;
-    cv.style.cursor = ['draw','ldraw','udraw','bsp','circle','sink','farmsink','cooktop','outlet','bocci','radius','edge','splitedge','joint','measure'].includes(t) ? 'crosshair' : 'default';
+    cv.style.cursor = ['draw','ldraw','udraw','bsp','circle','sink','farmsink','cooktop','outlet','bocci','radius','edge','splitedge','joint','check','measure'].includes(t) ? 'crosshair' : 'default';
     document.getElementById('edge-palette').style.display = t === 'edge' ? 'flex' : 'none';
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
-    const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
+    const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
     render();
 }
@@ -5346,6 +5493,7 @@ function calcTotalSqft() {
                 if (s.shapeType === 'u') area = uShapeAreaPx(s);
                 if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
                 if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+                area -= totalCheckAreaPx(s);
                 total += area;
             }
         }
@@ -5550,6 +5698,7 @@ function calcServiceQtys() {
             if (s.shapeType === 'u') area = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area = Math.PI * (s.w/2) * (s.h/2);
             if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+            area -= totalCheckAreaPx(s);
             const sqft = area / SQFT_PX2;
             totalSqft += sqft;
             // Check if material is Dekton
@@ -5718,6 +5867,7 @@ function renderPricingPanel() {
             if (s.shapeType === 'u') area = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area = Math.PI * (s.w/2) * (s.h/2);
             if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+            area -= totalCheckAreaPx(s);
             pageSqft += area / SQFT_PX2;
         }
         pageSqftById[page.id] = pageSqft;
@@ -6646,6 +6796,61 @@ function injectFsNotchInchesLocal(poly, s) {
     return out;
 }
 
+// Build a shape-local inches polygon for a plain rect with checks.
+// Walks the 4 edges CW and injects a U-shaped notch for each check on that edge.
+function buildRectPolyWithChecks(s) {
+    const wi = s.w / INCH, hi = s.h / INCH;
+    const checks = s.checks || [];
+    const byEdge = { top: [], right: [], bottom: [], left: [] };
+    for (const c of checks) {
+        if (byEdge[c.edgeKey]) byEdge[c.edgeKey].push({
+            cxIn: c.cx / INCH,
+            wIn:  c.w  / INCH,
+            dIn:  c.d  / INCH,
+        });
+    }
+    // Sort along edge traversal direction (CW from top-left)
+    byEdge.top.sort((a, b) => a.cxIn - b.cxIn);          // left → right
+    byEdge.right.sort((a, b) => a.cxIn - b.cxIn);        // top → bottom
+    byEdge.bottom.sort((a, b) => b.cxIn - a.cxIn);       // right → left
+    byEdge.left.sort((a, b) => b.cxIn - a.cxIn);         // bottom → top
+
+    const out = [];
+    // Top-left corner → right along top edge
+    out.push([0, 0]);
+    for (const c of byEdge.top) {
+        out.push([c.cxIn - c.wIn/2, 0]);
+        out.push([c.cxIn - c.wIn/2, c.dIn]);
+        out.push([c.cxIn + c.wIn/2, c.dIn]);
+        out.push([c.cxIn + c.wIn/2, 0]);
+    }
+    // Top-right corner → down along right edge
+    out.push([wi, 0]);
+    for (const c of byEdge.right) {
+        out.push([wi, c.cxIn - c.wIn/2]);
+        out.push([wi - c.dIn, c.cxIn - c.wIn/2]);
+        out.push([wi - c.dIn, c.cxIn + c.wIn/2]);
+        out.push([wi, c.cxIn + c.wIn/2]);
+    }
+    // Bottom-right corner → left along bottom edge
+    out.push([wi, hi]);
+    for (const c of byEdge.bottom) {
+        out.push([c.cxIn + c.wIn/2, hi]);
+        out.push([c.cxIn + c.wIn/2, hi - c.dIn]);
+        out.push([c.cxIn - c.wIn/2, hi - c.dIn]);
+        out.push([c.cxIn - c.wIn/2, hi]);
+    }
+    // Bottom-left corner → up along left edge
+    out.push([0, hi]);
+    for (const c of byEdge.left) {
+        out.push([0, c.cxIn + c.wIn/2]);
+        out.push([c.dIn, c.cxIn + c.wIn/2]);
+        out.push([c.dIn, c.cxIn - c.wIn/2]);
+        out.push([0, c.cxIn - c.wIn/2]);
+    }
+    return out;
+}
+
 function shapeLocalPolyInches(s) {
     const st = s.shapeType || 'rect';
     const toLocal = pts => pts.map(([x,y]) => [(x - s.x)/INCH, (y - s.y)/INCH]);
@@ -6670,7 +6875,13 @@ function shapeLocalPolyInches(s) {
     const hasChamfer = ch.nw||ch.ne||ch.se||ch.sw;
     const hasRadius  = r.nw||r.ne||r.se||r.sw;
     const hasFS      = !!s.farmSink;
-    if (!hasChamfer && !hasRadius && !hasFS) return [[0,0],[wi,0],[wi,hi],[0,hi]];
+    const hasChecks  = (s.checks || []).length > 0;
+    if (!hasChamfer && !hasRadius && !hasFS && !hasChecks) return [[0,0],[wi,0],[wi,hi],[0,hi]];
+    // Plain rect with ONLY checks (no corner treatments / farm sink) → build
+    // polygon by walking each edge and injecting check notches along the way.
+    if (!hasChamfer && !hasRadius && !hasFS && hasChecks) {
+        return buildRectPolyWithChecks(s);
+    }
 
     const pts = [];
     const toIn = v => v / INCH; // canvas px → inches
@@ -6862,6 +7073,10 @@ function shapeLocalRects(s) {
     if (hasChamfer || hasRadius) return null;
     if (s.farmSink) return null;
     if (st === 'circle') return null;
+    // Shapes with checks can't use rect decomposition — the notches make the
+    // outline non-rectangular. Fall back to SH polygon clipping which uses
+    // shapeLocalPolyInches (which already injects check notches).
+    if ((s.checks || []).length > 0) return null;
 
     if (st === 'rect' || !st) return [{ x: 0, y: 0, w: wi, h: hi }];
 
@@ -8089,6 +8304,7 @@ function calcPageSqft(page) {
         if (s.shapeType === 'u') area = uShapeAreaPx(s);
         if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
         if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+        area -= totalCheckAreaPx(s);
         total += area;
     }
     return Math.max(0, total) / SQFT_PX2;
@@ -8434,6 +8650,7 @@ function calcOptionsSummary() {
             if (s.shapeType === 'u')      area  = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area  = Math.PI * (s.w/2) * (s.h/2);
             if (s.farmSink)               area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
+            area -= totalCheckAreaPx(s);
             totalSqft += area / SQFT_PX2;
         }
     }
