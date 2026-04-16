@@ -2319,9 +2319,9 @@ function drawShape(s, sel) {
         ctx.restore();
     }
 
-    // Carve out each "check" (rectangular notch) — filled white, with a
-    // 3-segment border (into + across + out) drawn in the piece's normal edge
-    // color so the notch reads as cut-out rather than floating.
+    // Carve out each "check" (rectangular notch). Just erase the area so the
+    // piece genuinely reads as "material removed". The notch border gets drawn
+    // in the border pass below (via drawRectEdgeWithChecks).
     if (s.checks && s.checks.length) {
         for (const c of s.checks) {
             const rect = checkRectAbs(s, c);
@@ -2329,38 +2329,6 @@ function drawShape(s, sel) {
             ctx.save();
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-            // Inner U outline for the notch
-            ctx.strokeStyle = sel ? '#b09030' : '#222';
-            ctx.lineWidth = sel ? 2 : 1;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            if (c.edgeKey === 'top') {
-                ctx.moveTo(rect.x,          rect.y);
-                ctx.lineTo(rect.x,          rect.y + rect.h);
-                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
-                ctx.lineTo(rect.x + rect.w, rect.y);
-            } else if (c.edgeKey === 'bottom') {
-                ctx.moveTo(rect.x,          rect.y + rect.h);
-                ctx.lineTo(rect.x,          rect.y);
-                ctx.lineTo(rect.x + rect.w, rect.y);
-                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
-            } else if (c.edgeKey === 'left') {
-                ctx.moveTo(rect.x,          rect.y);
-                ctx.lineTo(rect.x + rect.w, rect.y);
-                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
-                ctx.lineTo(rect.x,          rect.y + rect.h);
-            } else if (c.edgeKey === 'right') {
-                ctx.moveTo(rect.x + rect.w, rect.y);
-                ctx.lineTo(rect.x,          rect.y);
-                ctx.lineTo(rect.x,          rect.y + rect.h);
-                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
-            }
-            ctx.stroke();
-            // "CHK" label inside the notch
-            ctx.font = 'bold 8px Raleway,sans-serif';
-            ctx.fillStyle = '#888';
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText('CHK', rect.x + rect.w/2, rect.y + rect.h/2);
             ctx.restore();
         }
     }
@@ -2402,6 +2370,13 @@ function drawShape(s, sel) {
         if (sd.key === 'bottom') labelOffset = { dx:0, dy: 14 };
         if (sd.key === 'left')   labelOffset = { dx:-14, dy:0 };
         if (sd.key === 'right')  labelOffset = { dx: 14, dy:0 };
+        // If this edge has check(s), split it around each notch so the
+        // border traces the real outline (pre-notch + into + across + out + post-notch).
+        const checksOnEdge = (s.checks || []).filter(c => c.edgeKey === sd.key);
+        if (checksOnEdge.length > 0) {
+            drawRectEdgeWithChecks(s, sd, edgeData, sel, checksOnEdge, labelOffset);
+            continue;
+        }
         drawEdgeDatum(edgeData || { type: 'none' }, sd.key, sd.x1, sd.y1, sd.x2, sd.y2, sel, labelOffset);
     }
 
@@ -3462,6 +3437,82 @@ function checkRectAbs(s, c) {
     if (c.edgeKey === 'left')   return { x: s.x,                y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
     if (c.edgeKey === 'right')  return { x: s.x + s.w - c.d,    y: s.y + c.cx - c.w/2, w: c.d, h: c.w };
     return null;
+}
+
+// Draw a rect edge that has one or more checks on it. Splits the edge into
+// pre-notch + U (into + across + out) + post-notch segments; the outer
+// (pre/post) segments inherit the edge's profile, the notch's 3 inner sides
+// render as plain 'none' borders (profiles on notch sides are a future feature).
+function drawRectEdgeWithChecks(s, sd, edgeData, sel, checksOnEdge, labelOffset) {
+    // Normalize to a parameter space along the edge.
+    // sd goes from (sd.x1, sd.y1) to (sd.x2, sd.y2). Compute a unit vector.
+    const dx = sd.x2 - sd.x1, dy = sd.y2 - sd.y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+    const ux = dx / len, uy = dy / len;
+    // Inward normal: perpendicular pointing into the piece.
+    let nx = 0, ny = 0;
+    if (sd.key === 'top')    { nx = 0;  ny = 1; }   // down
+    if (sd.key === 'bottom') { nx = 0;  ny = -1; }  // up
+    if (sd.key === 'left')   { nx = 1;  ny = 0; }   // right
+    if (sd.key === 'right')  { nx = -1; ny = 0; }   // left
+
+    // Convert each check to its along-edge range [t0, t1] (t in px from sd.x1,sd.y1).
+    // "cx" on the shape is along-edge center in px relative to shape origin;
+    // the edge's along-shape start depends on edge orientation.
+    // For sd going in the edge traversal direction (top L→R, right T→B, bottom R→L, left B→T):
+    // We need to map shape-local cx to sd param t.
+    const shapeEdgeStartT = (() => {
+        // cx 0 in shape terms corresponds to which end of sd?
+        // top (L→R): cx=0 → sd.x1=s.x+nwA; but shape cx measured from s.x, not s.x+nwA.
+        // For simplicity we treat cx relative to shape origin (s.x or s.y).
+        // Adjust: t_on_sd = shape_cx - offset_of_sd_start_on_shape.
+        if (sd.key === 'top')    return sd.x1 - s.x;
+        if (sd.key === 'bottom') return (s.x + s.w) - sd.x1;  // sd runs right→left, so "t=0" at sd.x1 corresponds to shape_cx = s.w - 0 = s.w
+        if (sd.key === 'left')   return (s.y + s.h) - sd.y1;  // sd runs bottom→top
+        if (sd.key === 'right')  return sd.y1 - s.y;          // sd runs top→bottom
+        return 0;
+    })();
+    const ranges = checksOnEdge.map(c => {
+        const t0 = c.cx - c.w/2 - shapeEdgeStartT;
+        const t1 = c.cx + c.w/2 - shapeEdgeStartT;
+        return { t0, t1, d: c.d };
+    }).filter(r => r.t1 > 0 && r.t0 < len)
+      .sort((a, b) => a.t0 - b.t0);
+
+    // Walk segments
+    let cursor = 0;
+    const edgeDatum = edgeData || { type: 'none' };
+    function ptAt(t)      { return [sd.x1 + ux*t, sd.y1 + uy*t]; }
+    function deepPt(t, d) { const [x, y] = ptAt(t); return [x + nx*d, y + ny*d]; }
+
+    let idx = 0;
+    for (const r of ranges) {
+        // Pre-notch: cursor → t0
+        if (r.t0 > cursor + 0.5) {
+            const [ax, ay] = ptAt(cursor);
+            const [bx, by] = ptAt(r.t0);
+            drawEdgeDatum(edgeDatum, sd.key + '_pre' + idx, ax, ay, bx, by, sel, labelOffset);
+        }
+        // Into notch: (t0 on edge) → deep (t0, d)
+        const [ix, iy] = ptAt(r.t0);
+        const [dx1, dy1] = deepPt(r.t0, r.d);
+        drawEdgeDatum({ type:'none' }, sd.key + '_notchIn' + idx, ix, iy, dx1, dy1, sel);
+        // Across bottom of notch: deep (t0) → deep (t1)
+        const [dx2, dy2] = deepPt(r.t1, r.d);
+        drawEdgeDatum({ type:'none' }, sd.key + '_notchBot' + idx, dx1, dy1, dx2, dy2, sel);
+        // Out of notch: deep (t1) → (t1 on edge)
+        const [ox, oy] = ptAt(r.t1);
+        drawEdgeDatum({ type:'none' }, sd.key + '_notchOut' + idx, dx2, dy2, ox, oy, sel);
+        cursor = r.t1;
+        idx++;
+    }
+    // Post-notch: cursor → end
+    if (cursor < len - 0.5) {
+        const [ax, ay] = ptAt(cursor);
+        const [bx, by] = ptAt(len);
+        drawEdgeDatum(edgeDatum, sd.key + '_post', ax, ay, bx, by, sel, labelOffset);
+    }
 }
 
 // ── L-Shape popup ────────────────────────────────────────────
