@@ -4315,9 +4315,11 @@ cv.addEventListener('mousedown', e => {
             alert('Click near a corner of a rectangle piece to place a check.');
             return;
         }
+        // showCheckPopup calls hideAllPopups() which wipes pendingCheck*,
+        // so set them AFTER opening the popup.
+        showCheckPopup(best.cx, best.cy);
         pendingCheckShape  = best.s;
         pendingCheckCorner = best.cornerKey;
-        showCheckPopup(best.cx, best.cy);
         return;
     }
 
