@@ -2303,9 +2303,27 @@ function drawShape(s, sel) {
         return;
     }
 
-    roundedRectPath(ctx, s.x, s.y, s.w, s.h, r, ch, chB);
-    ctx.fillStyle = fill;
-    ctx.fill();
+    // For plain rects with checks (no corner treatments / farm sink), fill
+    // the notched polygon directly so the fill never bleeds into the notch —
+    // the piece genuinely reads as "material removed".
+    const hasAnyChamfer = ch.nw || ch.ne || ch.se || ch.sw;
+    const hasAnyRadius  = r.nw  || r.ne  || r.se  || r.sw;
+    const hasChecks     = (s.checks || []).length > 0;
+    if (hasChecks && !hasAnyChamfer && !hasAnyRadius && !s.farmSink && (s.shapeType || 'rect') === 'rect') {
+        const localPoly = buildRectPolyWithChecks(s);
+        ctx.beginPath();
+        ctx.moveTo(s.x + localPoly[0][0] * INCH, s.y + localPoly[0][1] * INCH);
+        for (let i = 1; i < localPoly.length; i++) {
+            ctx.lineTo(s.x + localPoly[i][0] * INCH, s.y + localPoly[i][1] * INCH);
+        }
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+    } else {
+        roundedRectPath(ctx, s.x, s.y, s.w, s.h, r, ch, chB);
+        ctx.fillStyle = fill;
+        ctx.fill();
+    }
 
     // Carve out farmhouse sink notch (paint over with canvas background)
     if (s.farmSink) {
@@ -2319,19 +2337,8 @@ function drawShape(s, sel) {
         ctx.restore();
     }
 
-    // Carve out each "check" (rectangular notch). Just erase the area so the
-    // piece genuinely reads as "material removed". The notch border gets drawn
-    // in the border pass below (via drawRectEdgeWithChecks).
-    if (s.checks && s.checks.length) {
-        for (const c of s.checks) {
-            const rect = checkRectAbs(s, c);
-            if (!rect) continue;
-            ctx.save();
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-            ctx.restore();
-        }
-    }
+    // (Check notches are handled via the notched-polygon fill above and the
+    // per-edge border split in drawRectEdgeWithChecks — no white-carve needed.)
 
     // 2. Border — each side drawn with its profile
     // A = along first incoming side, B = along outgoing side (0 = goes all the way to corner)
@@ -3444,39 +3451,29 @@ function checkRectAbs(s, c) {
 // (pre/post) segments inherit the edge's profile, the notch's 3 inner sides
 // render as plain 'none' borders (profiles on notch sides are a future feature).
 function drawRectEdgeWithChecks(s, sd, edgeData, sel, checksOnEdge, labelOffset) {
-    // Normalize to a parameter space along the edge.
-    // sd goes from (sd.x1, sd.y1) to (sd.x2, sd.y2). Compute a unit vector.
     const dx = sd.x2 - sd.x1, dy = sd.y2 - sd.y1;
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return;
     const ux = dx / len, uy = dy / len;
     // Inward normal: perpendicular pointing into the piece.
     let nx = 0, ny = 0;
-    if (sd.key === 'top')    { nx = 0;  ny = 1; }   // down
-    if (sd.key === 'bottom') { nx = 0;  ny = -1; }  // up
-    if (sd.key === 'left')   { nx = 1;  ny = 0; }   // right
-    if (sd.key === 'right')  { nx = -1; ny = 0; }   // left
+    if (sd.key === 'top')    { nx = 0;  ny = 1; }
+    if (sd.key === 'bottom') { nx = 0;  ny = -1; }
+    if (sd.key === 'left')   { nx = 1;  ny = 0; }
+    if (sd.key === 'right')  { nx = -1; ny = 0; }
 
-    // Convert each check to its along-edge range [t0, t1] (t in px from sd.x1,sd.y1).
-    // "cx" on the shape is along-edge center in px relative to shape origin;
-    // the edge's along-shape start depends on edge orientation.
-    // For sd going in the edge traversal direction (top L→R, right T→B, bottom R→L, left B→T):
-    // We need to map shape-local cx to sd param t.
-    const shapeEdgeStartT = (() => {
-        // cx 0 in shape terms corresponds to which end of sd?
-        // top (L→R): cx=0 → sd.x1=s.x+nwA; but shape cx measured from s.x, not s.x+nwA.
-        // For simplicity we treat cx relative to shape origin (s.x or s.y).
-        // Adjust: t_on_sd = shape_cx - offset_of_sd_start_on_shape.
-        if (sd.key === 'top')    return sd.x1 - s.x;
-        if (sd.key === 'bottom') return (s.x + s.w) - sd.x1;  // sd runs right→left, so "t=0" at sd.x1 corresponds to shape_cx = s.w - 0 = s.w
-        if (sd.key === 'left')   return (s.y + s.h) - sd.y1;  // sd runs bottom→top
-        if (sd.key === 'right')  return sd.y1 - s.y;          // sd runs top→bottom
-        return 0;
-    })();
+    // Convert each check to its along-edge range [t0, t1] in sd's parameter
+    // space. sd traverses CW: top L→R, right T→B, bottom R→L, left B→T.
+    // shape-local cx is the notch center measured from shape origin along
+    // that edge's PERPENDICULAR axis. For top/right, t increases with cx.
+    // For bottom/left, t increases as cx DECREASES (edge runs backward).
     const ranges = checksOnEdge.map(c => {
-        const t0 = c.cx - c.w/2 - shapeEdgeStartT;
-        const t1 = c.cx + c.w/2 - shapeEdgeStartT;
-        return { t0, t1, d: c.d };
+        let tCenter;
+        if (sd.key === 'top')    tCenter = c.cx;          // sd.x1 = s.x, t = cx
+        else if (sd.key === 'right')  tCenter = c.cx;     // sd.y1 = s.y, t = cx
+        else if (sd.key === 'bottom') tCenter = s.w - c.cx; // sd.x1 = s.x+s.w, t grows leftward
+        else                           tCenter = s.h - c.cx; // left: sd.y1 = s.y+s.h, t grows upward
+        return { t0: tCenter - c.w/2, t1: tCenter + c.w/2, d: c.d };
     }).filter(r => r.t1 > 0 && r.t0 < len)
       .sort((a, b) => a.t0 - b.t0);
 
