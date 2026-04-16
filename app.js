@@ -2778,6 +2778,37 @@ function render() {
         }
         ctx.restore();
     }
+    // When the Check tool is active, highlight the midpoint of each edge on
+    // every rect shape so the user sees exactly where a check can be placed.
+    if (tool === 'check') {
+        ctx.save();
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            if ((s.shapeType || 'rect') !== 'rect') continue;
+            const mids = [
+                { x: s.x + s.w/2, y: s.y },           // top
+                { x: s.x + s.w,   y: s.y + s.h/2 },   // right
+                { x: s.x + s.w/2, y: s.y + s.h },     // bottom
+                { x: s.x,         y: s.y + s.h/2 },   // left
+            ];
+            for (const m of mids) {
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, 12, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(176,144,48,0.35)';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#b09030';
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+            }
+        }
+        ctx.restore();
+    }
+
     // Joint-snap indicator: gold dot + halo when a joint drag is locked to an inside corner
     if (jointSnapCorner) {
         ctx.save();
@@ -2863,10 +2894,11 @@ function drawLegendSwatches() {
 //  Popup helpers
 // ─────────────────────────────────────────────────────────────
 function hideAllPopups() {
-    ['size-popup','lshape-popup','ushape-popup','bsp-popup','circle-popup','sink-popup','radius-popup','edge-popup','joint-popup','text-popup'].forEach(id =>
+    ['size-popup','lshape-popup','ushape-popup','bsp-popup','circle-popup','sink-popup','radius-popup','edge-popup','joint-popup','check-popup','text-popup'].forEach(id =>
         document.getElementById(id).style.display = 'none');
     currentPopup = null; pendingPlace = null; pendingCorner = null;
     pendingEdge = null; pendingJointShape = null; pendingJointPos = null;
+    pendingCheckShape = null; pendingCheckEdge = null; pendingCheckClick = null;
 }
 
 function screenPos(cvX, cvY) {
