@@ -1,8 +1,6 @@
 // Per-shop branding — SPARTAN INSTALLATIONS
 const BRAND = {
 
-    accessCode:   'Thenry12',
-
     companyName:  'SPARTAN',
     tagline:      'installations',
 
