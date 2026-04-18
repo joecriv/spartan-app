@@ -5112,8 +5112,8 @@ function matHtml(m) {
     // Resilience: if the stored brand isn't in the catalog (e.g., catalog not yet loaded),
     // add it to the options so the selection is visually preserved.
     const brandOpts = [...new Set([...brands, selBrand].filter(Boolean))].sort();
-    // Colors for selected brand
-    const colors = selBrand ? matDb.filter(d => d.supplier === selBrand) : [];
+    // Colors for selected brand (alphabetical)
+    const colors = selBrand ? matDb.filter(d => d.supplier === selBrand).sort((a,b) => (a.name||'').localeCompare(b.name||'')) : [];
     const selDbId = m.dbId || 0;
     const linked = matDb.find(d => d.id === selDbId);
     // If we have a stored color name but the catalog entry isn't present (stale matDb),
@@ -5122,8 +5122,8 @@ function matHtml(m) {
         ? `<option value="${selDbId}" selected>${m.color}</option>`
         : '';
     // Finishes + thicknesses from linked color
-    const availFinishes = linked ? (linked.finishes||[]) : [];
-    const availThick = linked ? (linked.thicknesses||[]) : [];
+    const availFinishes = linked ? [...(linked.finishes||[])].sort() : [];
+    const availThick = linked ? [...(linked.thicknesses||[])].sort() : [];
     const selFinish = m.finish || (availFinishes[0]||'');
     const selThick = m.thickness || (availThick[availThick.length-1]||'');
     const slabStr = linked ? `${linked.slabW||'?'}" × ${linked.slabH||'?'}"` : '';
@@ -5488,7 +5488,8 @@ function renderMatDb() {
     }
     const allF = allKnownFinishes();
     const allT = allKnownThicknesses();
-    container.innerHTML = matDb.map(m => {
+    const sorted = [...matDb].sort((a,b) => (a.supplier||'').localeCompare(b.supplier||'') || (a.name||'').localeCompare(b.name||''));
+    container.innerHTML = sorted.map(m => {
         const selF = new Set(m.finishes || []);
         const selT = new Set(m.thicknesses || []);
         return `<div class="mat-row" data-dbid="${m.id}" style="padding:6px 8px">
@@ -5977,7 +5978,7 @@ function renderCostsPanel() {
     // ── Slab Prices (filtered) ──────────────────────────────────
     const priceContainer = document.getElementById('cost-slab-prices');
     if (priceContainer) {
-        const filtered = costBrandFilter ? matDb.filter(m => m.supplier === costBrandFilter) : matDb;
+        const filtered = (costBrandFilter ? matDb.filter(m => m.supplier === costBrandFilter) : [...matDb]).sort((a,b) => (a.name||'').localeCompare(b.name||''));
         if (!filtered.length) {
             priceContainer.innerHTML = '<p class="price-internal-note">' + (matDb.length ? 'No materials match this brand.' : 'No materials in database. Add materials below first.') + '</p>';
         } else {
