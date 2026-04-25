@@ -10958,7 +10958,7 @@ function exportPDF() {
 
     // ── Job Details ──────────────────────────────────────────
     sectionHead('JOB DETAILS');
-    const fields = [['Job Name', formData.job], ['Client', formData.client], ['Order #', formData.order], ['Date', formData.date]];
+    const fields = [['Sales Rep', formData.job], ['Client', formData.client], ['Order #', formData.order], ['Date', formData.date]];
     for (const [lbl, val] of fields) {
         checkY(14);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(80, 68, 30);
@@ -11236,7 +11236,7 @@ async function exportLayoutPDF() {
     addPageFooter();
 
     sectionHead('JOB DETAILS');
-    const fields = [['Job Name', formData.job], ['Client', formData.client], ['Order #', formData.order], ['Date', formData.date]];
+    const fields = [['Sales Rep', formData.job], ['Client', formData.client], ['Order #', formData.order], ['Date', formData.date]];
     for (const [lbl, val] of fields) {
         checkY(14);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(80, 68, 30);
