@@ -9607,9 +9607,8 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
                 ctx.fillText(lbl, mxC, myC);
             }
             // Center area label
-            let cxC = 0, cyC = 0;
-            r.poly.forEach(p => { cxC += p.x; cyC += p.y; });
-            cxC /= r.poly.length; cyC /= r.poly.length;
+            const _lp = slabPolyLabelPos(r.poly);
+            const cxC = _lp.x, cyC = _lp.y;
             const sqft = slabPolyAreaSqft(r.poly);
             const aLbl = `${sqft.toFixed(2)} sqft`;
             ctx.font = 'bold 11px Raleway,sans-serif';
@@ -9727,6 +9726,47 @@ function slabPolyAreaSqft(pts) {
         a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
     }
     return Math.abs(a) / 2 / 144;
+}
+// Returns a point guaranteed inside the polygon, suitable for placing
+// labels. Uses the area centroid first, falls back to the midpoint of the
+// longest interior horizontal segment for non-convex shapes (L, T, etc.).
+function slabPolyLabelPos(poly) {
+    let A2 = 0, cx = 0, cy = 0;
+    for (let i = 0; i < poly.length; i++) {
+        const j = (i+1) % poly.length;
+        const cross = poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+        A2 += cross;
+        cx += (poly[i].x + poly[j].x) * cross;
+        cy += (poly[i].y + poly[j].y) * cross;
+    }
+    if (Math.abs(A2) > 1e-6) {
+        const A = A2 / 2;
+        const ax = cx / (6 * A), ay = cy / (6 * A);
+        if (slabPointInPoly(ax, ay, poly)) return { x: ax, y: ay };
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of poly) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    let best = { x: (minX+maxX)/2, y: (minY+maxY)/2, len: -1 };
+    const N = 24;
+    for (let k = 1; k < N; k++) {
+        const y = minY + (maxY - minY) * k / N;
+        const xs = [];
+        for (let i = 0; i < poly.length; i++) {
+            const a = poly[i], b = poly[(i+1) % poly.length];
+            if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) {
+                xs.push(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x));
+            }
+        }
+        xs.sort((p, q) => p - q);
+        for (let s = 0; s + 1 < xs.length; s += 2) {
+            const len = xs[s+1] - xs[s];
+            if (len > best.len) best = { x: (xs[s] + xs[s+1]) / 2, y, len };
+        }
+    }
+    return { x: best.x, y: best.y };
 }
 function slabPointInPoly(x, y, pts) {
     let inside = false;
