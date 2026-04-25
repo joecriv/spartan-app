@@ -4900,16 +4900,81 @@ document.addEventListener('keydown', e => {
             } else if (s.shapeType === 'circle') {
                 // No change — circles are symmetric
             } else {
-                // Rect / BSP / sinks / cooktops — swap w and h.
-                // Rect corner checks: cycle cornerKey CW and swap w↔d so the
-                // physical notch rotates with the piece.
-                if (s.checks && s.checks.length && (s.shapeType || 'rect') === 'rect') {
+                // Rect / BSP / sinks / cooktops — swap w and h, and rotate
+                // every corner / edge property CW so the visual features
+                // stick to the piece.
+                const isRect = (s.shapeType || 'rect') === 'rect';
+                if (isRect && s.farmSink) {
+                    alert('Remove the farm sink before rotating this piece.\n\nRotating a rectangle that has a farm sink is not yet supported because the sink is anchored to the top/bottom edge.');
+                    return;
+                }
+                // Rect corner checks: cycle cornerKey CW and swap w↔d.
+                if (s.checks && s.checks.length && isRect) {
                     const cyc = { nw:'ne', ne:'se', se:'sw', sw:'nw' };
                     for (const c of s.checks) {
                         if (c.cornerKey) {
                             c.cornerKey = cyc[c.cornerKey] || c.cornerKey;
                             const ow = c.w; c.w = c.d; c.d = ow;
                         }
+                    }
+                }
+                if (isRect) {
+                    // Corner radii — symmetric, just cycle keys.
+                    // 90° CW rotation: each new corner inherits from the
+                    // corner one step counter-clockwise (the corner that
+                    // physically rotates INTO this position).
+                    //   new NW ← old SW, NE ← NW, SE ← NE, SW ← SE
+                    if (s.corners) {
+                        const o = { ...s.corners };
+                        s.corners = {
+                            nw: o.sw || 0, ne: o.nw || 0,
+                            se: o.ne || 0, sw: o.se || 0
+                        };
+                    }
+                    // Chamfers: keys cycle the same way, BUT the A/B legs
+                    // of each chamfer swap because the polygon walk reverses
+                    // their role at the rotated corner.
+                    if (s.chamfers || s.chamfersB) {
+                        const ch  = { ...(s.chamfers  || {}) };
+                        const chB = { ...(s.chamfersB || {}) };
+                        s.chamfers  = {
+                            nw: chB.sw || 0, ne: chB.nw || 0,
+                            se: chB.ne || 0, sw: chB.se || 0
+                        };
+                        s.chamfersB = {
+                            nw: ch.sw  || 0, ne: ch.nw  || 0,
+                            se: ch.ne  || 0, sw: ch.se  || 0
+                        };
+                    }
+                    // Corner edge profiles (the radius arc / chamfer diagonal
+                    // styling) — single value per corner, same cycle.
+                    const noneEd = { type: 'none' };
+                    if (s.cornerEdges) {
+                        const o = { ...s.cornerEdges };
+                        s.cornerEdges = {
+                            nw: o.sw || noneEd, ne: o.nw || noneEd,
+                            se: o.ne || noneEd, sw: o.se || noneEd
+                        };
+                    }
+                    if (s.chamferEdges) {
+                        const o = { ...s.chamferEdges };
+                        s.chamferEdges = {};
+                        if (o.sw) s.chamferEdges.nw = o.sw;
+                        if (o.nw) s.chamferEdges.ne = o.nw;
+                        if (o.ne) s.chamferEdges.se = o.ne;
+                        if (o.se) s.chamferEdges.sw = o.se;
+                    }
+                    // Side edge profiles: top → right → bottom → left → top.
+                    // Segmented-edge order is preserved because adjacent edges
+                    // both run forward in the CW polygon traversal.
+                    if (s.edges) {
+                        const o = { ...s.edges };
+                        s.edges = {
+                            top:    o.left   || noneEd,
+                            right:  o.top    || noneEd,
+                            bottom: o.right  || noneEd,
+                            left:   o.bottom || noneEd
+                        };
                     }
                 }
                 const oldW = s.w; s.w = s.h; s.h = oldW;
