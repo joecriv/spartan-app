@@ -7941,6 +7941,43 @@ function slabPieceInDeadZone(slabIdx, x, y, w, h, ref, rotation) {
 // inches. Returns null for shapes that can't be cleanly decomposed (chamfered,
 // rounded, circle, farmSink present, etc.) — those still go through the
 // Sutherland-Hodgman fallback in slabAllPieces.
+// Subtract rect B from rect A. Returns 0–4 sub-rects covering A \ B.
+// Used to carve a farm-sink hole out of an L/U/BSP rect decomposition so
+// the slab pieces include the cutout cleanly without resorting to SH
+// clipping (which produces bowtie polygons on concave shapes).
+function subtractRect(A, B) {
+    const ax2 = A.x + A.w, ay2 = A.y + A.h;
+    const bx2 = B.x + B.w, by2 = B.y + B.h;
+    const cx1 = Math.max(A.x, B.x), cx2 = Math.min(ax2, bx2);
+    const cy1 = Math.max(A.y, B.y), cy2 = Math.min(ay2, by2);
+    if (cx1 >= cx2 - 1e-6 || cy1 >= cy2 - 1e-6) return [A]; // no overlap
+    const out = [];
+    if (A.y < cy1 - 1e-6) out.push({ x: A.x, y: A.y, w: A.w,        h: cy1 - A.y  });
+    if (cy2 < ay2 - 1e-6) out.push({ x: A.x, y: cy2, w: A.w,        h: ay2 - cy2  });
+    if (A.x < cx1 - 1e-6) out.push({ x: A.x, y: cy1, w: cx1 - A.x,  h: cy2 - cy1  });
+    if (cx2 < ax2 - 1e-6) out.push({ x: cx2, y: cy1, w: ax2 - cx2,  h: cy2 - cy1  });
+    return out.filter(r => r.w > 1e-6 && r.h > 1e-6);
+}
+
+// Returns the farm-sink cutout rect in shape-local inches, or null if there
+// isn't one. Works for both rect (edge: 'top'|'bottom') and L/U (edge:'seg').
+function fsRectLocalInches(s) {
+    if (!s.farmSink) return null;
+    if (s.farmSink.edge === 'top' || s.farmSink.edge === 'bottom') {
+        const cxIn = s.farmSink.cx / INCH;
+        const yIn  = s.farmSink.edge === 'top' ? 0 : (s.h / INCH - FS_DEPTH_IN);
+        return { x: cxIn - FS_WIDTH_IN / 2, y: yIn, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
+    }
+    if (s.farmSink.edge === 'seg') {
+        const cxIn = s.farmSink.cx / INCH;
+        const segYIn = s.farmSink.segY / INCH;
+        const dir = s.farmSink.dir || 1;
+        const yTop = dir > 0 ? segYIn : segYIn - FS_DEPTH_IN;
+        return { x: cxIn - FS_WIDTH_IN / 2, y: yTop, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
+    }
+    return null;
+}
+
 function shapeLocalRects(s) {
     const st = s.shapeType || 'rect';
     const wi = s.w / INCH, hi = s.h / INCH;
@@ -7949,39 +7986,42 @@ function shapeLocalRects(s) {
     const hasChamfer = ch.nw || ch.ne || ch.se || ch.sw;
     const hasRadius  = r.nw  || r.ne  || r.se  || r.sw;
     if (hasChamfer || hasRadius) return null;
-    if (s.farmSink) return null;
     if (st === 'circle') return null;
+    // Plain rect with farm sink falls back to SH polygon clipping (the
+    // single bounding rect doesn't carry a hole). For L/U/BSP we DO handle
+    // farm sinks below by subtracting the FS rect from the decomposition.
+    if (s.farmSink && (st === 'rect' || !st)) return null;
     // Shapes with checks can't use rect decomposition — the notches make the
     // outline non-rectangular. Fall back to SH polygon clipping which uses
     // shapeLocalPolyInches (which already injects check notches).
     if ((s.checks || []).length > 0) return null;
 
-    if (st === 'rect' || !st) return [{ x: 0, y: 0, w: wi, h: hi }];
+    let rects = null;
 
-    if (st === 'l') {
+    if (st === 'rect' || !st) {
+        rects = [{ x: 0, y: 0, w: wi, h: hi }];
+    } else if (st === 'l') {
         const nW = (s.notchW || 0) / INCH, nH = (s.notchH || 0) / INCH;
         const corner = s.notchCorner || 'ne';
         switch (corner) {
-            case 'ne': return [
+            case 'ne': rects = [
                 { x: 0,       y: 0,  w: wi - nW, h: hi },
                 { x: wi - nW, y: nH, w: nW,      h: hi - nH },
-            ];
-            case 'nw': return [
+            ]; break;
+            case 'nw': rects = [
                 { x: nW,      y: 0,  w: wi - nW, h: hi },
                 { x: 0,       y: nH, w: nW,      h: hi - nH },
-            ];
-            case 'se': return [
+            ]; break;
+            case 'se': rects = [
                 { x: 0,       y: 0,  w: wi - nW, h: hi },
                 { x: wi - nW, y: 0,  w: nW,      h: hi - nH },
-            ];
-            case 'sw': return [
+            ]; break;
+            case 'sw': rects = [
                 { x: nW,      y: 0,  w: wi - nW, h: hi },
                 { x: 0,       y: 0,  w: nW,      h: hi - nH },
-            ];
+            ]; break;
         }
-    }
-
-    if (st === 'u') {
+    } else if (st === 'u') {
         const op = s.uOpening || 'top';
         const isVert = (op === 'top' || op === 'bottom');
         const A = isVert ? wi : hi;
@@ -7999,12 +8039,10 @@ function shapeLocalRects(s) {
         const leftTopY   = H - lH;
         const rightTopY  = H - rH;
 
-        // Canonical 'top' opening rects in (A, H) coords — NON-OVERLAPPING.
-        // Arms are truncated at floorY so they don't double-count the floor area.
         const canonical = [
-            { x: 0,        y: leftTopY,  w: lW, h: floorY - leftTopY  },  // left arm (above floor only)
-            { x: A - rW,   y: rightTopY, w: rW, h: floorY - rightTopY },  // right arm (above floor only)
-            { x: 0,        y: floorY,    w: A,  h: fH                 },  // full-width floor
+            { x: 0,        y: leftTopY,  w: lW, h: floorY - leftTopY  },
+            { x: A - rW,   y: rightTopY, w: rW, h: floorY - rightTopY },
+            { x: 0,        y: floorY,    w: A,  h: fH                 },
         ].filter(rc => rc.w > 0 && rc.h > 0);
 
         const transform = p => {
@@ -8014,19 +8052,31 @@ function shapeLocalRects(s) {
             if (op === 'left')   return { x: p.y,           y: A - p.x - p.w, w: p.h, h: p.w };
             return p;
         };
-        return canonical.map(transform);
-    }
-
-    if (st === 'bsp') {
+        rects = canonical.map(transform);
+    } else if (st === 'bsp') {
         const pX = (s.pX !== undefined ? s.pX : Math.round((s.w - s.pW) / 2)) / INCH;
         const pW = s.pW / INCH, pH = s.pH / INCH;
-        return [
-            { x: pX, y: 0,  w: pW, h: pH },         // protrusion
-            { x: 0,  y: pH, w: wi, h: hi - pH },    // main body
+        rects = [
+            { x: pX, y: 0,  w: pW, h: pH },
+            { x: 0,  y: pH, w: wi, h: hi - pH },
         ].filter(rc => rc.w > 0 && rc.h > 0);
     }
 
-    return null;
+    if (!rects) return null;
+
+    // Carve out the farm-sink hole, if any. For L/U/BSP shapes the FS rect
+    // is contained in (or overlaps) one or two of the base rects; subtract
+    // it from each. The result is still a clean rect decomposition that the
+    // joint-cut + connected-components pipeline can split correctly.
+    if (s.farmSink) {
+        const fs = fsRectLocalInches(s);
+        if (fs) {
+            const out = [];
+            for (const rc of rects) out.push(...subtractRect(rc, fs));
+            rects = out;
+        }
+    }
+    return rects;
 }
 
 function slabAllPieces() {
@@ -8719,6 +8769,22 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
             if (segPoly) {
                 // Exact clipped polygon — apply 4-way rotation to local inch coords
                 const pts = segPoly.map(([lx, ly]) => {
+                    switch(rot) {
+                        case 1: return [hi_in - ly, lx];
+                        case 2: return [wi_in - lx, hi_in - ly];
+                        case 3: return [ly, wi_in - lx];
+                        default:return [lx, ly];
+                    }
+                });
+                ctx.moveTo(px + pts[0][0]*sc, py + pts[0][1]*sc);
+                for (let i = 1; i < pts.length; i++) ctx.lineTo(px + pts[i][0]*sc, py + pts[i][1]*sc);
+                ctx.closePath();
+            } else if ((shapeType === 'l' || shapeType === 'u') && shape && p.ref.segIdx == null && shape.farmSink) {
+                // L/U with farm sink — vertex-based path can't carve the FS
+                // notch, so route through shapeLocalPolyInches which already
+                // injects the cutout via injectFsNotchInchesLocal.
+                const poly = shapeLocalPolyInches(shape);
+                const pts = poly.map(([lx, ly]) => {
                     switch(rot) {
                         case 1: return [hi_in - ly, lx];
                         case 2: return [wi_in - lx, hi_in - ly];
@@ -11379,6 +11445,14 @@ function kitBuildPath(ctx, p, px, py, sc, rotOverride) {
     ctx.beginPath();
     if (segPoly) {
         const pts=segPoly.map(([lx,ly])=>{switch(rot){case 1:return[hi_in-ly,lx];case 2:return[wi_in-lx,hi_in-ly];case 3:return[ly,wi_in-lx];default:return[lx,ly];}});
+        ctx.moveTo(px+pts[0][0]*sc,py+pts[0][1]*sc);
+        for(let i=1;i<pts.length;i++) ctx.lineTo(px+pts[i][0]*sc,py+pts[i][1]*sc);
+        ctx.closePath();
+    } else if ((st==='l'||st==='u')&&shape&&p.ref.segIdx==null&&shape.farmSink) {
+        // L/U with farm sink: route through shapeLocalPolyInches so the
+        // FS notch is carved in the captured piece outline.
+        const poly=shapeLocalPolyInches(shape);
+        const pts=poly.map(([lx,ly])=>{switch(rot){case 1:return[hi_in-ly,lx];case 2:return[wi_in-lx,hi_in-ly];case 3:return[ly,wi_in-lx];default:return[lx,ly];}});
         ctx.moveTo(px+pts[0][0]*sc,py+pts[0][1]*sc);
         for(let i=1;i<pts.length;i++) ctx.lineTo(px+pts[i][0]*sc,py+pts[i][1]*sc);
         ctx.closePath();
