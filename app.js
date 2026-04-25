@@ -6829,22 +6829,42 @@ async function regDeleteQuote(quoteId) {
 // migration has been applied to Supabase.
 let regHistoryQuoteId = null;
 let regHistoryRows = [];
+let regHistoryHasMore = false;
+const REG_HISTORY_PAGE = 50;
 
 async function regOpenHistory(quoteId) {
     if (!currentShopId) return;
     regHistoryQuoteId = quoteId;
-    const { data, error } = await _sb.from('quotes_history')
+    regHistoryRows = [];
+    regHistoryHasMore = false;
+    await regFetchHistoryPage();
+    regShowHistoryModal();
+}
+
+// Fetches the next page of history rows (older than the oldest one we have).
+async function regFetchHistoryPage() {
+    const oldest = regHistoryRows.length ? regHistoryRows[regHistoryRows.length - 1].snapshot_at : null;
+    let q = _sb.from('quotes_history')
         .select('history_id, snapshot_at, order_number, job_name, client_name, address, status, created_by_email, updated_at, deleted_at')
-        .eq('quote_id', quoteId)
+        .eq('quote_id', regHistoryQuoteId)
         .order('snapshot_at', { ascending: false })
-        .limit(50);
+        .limit(REG_HISTORY_PAGE + 1); // +1 sentinel to know if more exist
+    if (oldest) q = q.lt('snapshot_at', oldest);
+    const { data, error } = await q;
     if (error) {
         console.error('history fetch failed:', error);
         alert('Failed to load history: ' + (error.message || error) + '\n\nMake sure supabase_migration_quotes_history.sql has been run in the Supabase SQL Editor.');
         return;
     }
-    regHistoryRows = data || [];
-    regShowHistoryModal();
+    const rows = data || [];
+    regHistoryHasMore = rows.length > REG_HISTORY_PAGE;
+    if (regHistoryHasMore) rows.pop();
+    regHistoryRows = regHistoryRows.concat(rows);
+}
+
+async function regLoadMoreHistory() {
+    await regFetchHistoryPage();
+    regRenderHistoryList();
 }
 
 function regShowHistoryModal() {
@@ -6883,7 +6903,7 @@ function regRenderHistoryList() {
         list.innerHTML = '<div style="color:#666;font-size:11px;text-align:center;padding:24px 0">No history yet — every save will snapshot the previous version.</div>';
         return;
     }
-    list.innerHTML = regHistoryRows.map(h => {
+    const rows = regHistoryRows.map(h => {
         const when = new Date(h.snapshot_at).toLocaleString();
         const rep = (h.created_by_email||'').split('@')[0] || '?';
         return `<div style="padding:8px 10px;border:1px solid #2a2a2a;border-radius:4px;margin-bottom:6px;background:#141414">
@@ -6896,6 +6916,10 @@ function regRenderHistoryList() {
             </div>
         </div>`;
     }).join('');
+    const loadMore = regHistoryHasMore
+        ? `<button onclick="regLoadMoreHistory()" style="width:100%;margin-top:6px;padding:8px;background:#1a1a1a;border:1px dashed #444;color:#888;border-radius:4px;cursor:pointer;font-size:11px;font-family:Raleway,sans-serif">Load older snapshots</button>`
+        : `<div style="text-align:center;color:#555;font-size:9px;padding:8px;font-style:italic">${regHistoryRows.length} snapshot${regHistoryRows.length === 1 ? '' : 's'} — that's all of them.</div>`;
+    list.innerHTML = rows + loadMore;
 }
 
 function regCloseHistory() {
