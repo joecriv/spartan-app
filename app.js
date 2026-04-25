@@ -639,6 +639,17 @@ function drawProfileDiags() {
         // Border
         ctx.strokeStyle = isSel ? '#b09030' : 'rgba(255,255,255,0.15)'; ctx.lineWidth = isSel ? 2.5 : 1;
         ctx.beginPath(); ctx.roundRect(d.x, d.y, dw, dh, 6); ctx.stroke();
+        // Always-visible × delete button (top-right) — see hitDiagDelete()
+        const _xs = DIAG_X_SIZE;
+        const _xc = d.x + dw - _xs/2 - 4;
+        const _yc = d.y + _xs/2 + 4;
+        ctx.fillStyle = isSel ? 'rgba(180,60,60,0.95)' : 'rgba(20,18,15,0.85)';
+        ctx.beginPath(); ctx.arc(_xc, _yc, _xs/2, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = isSel ? '#ff8888' : 'rgba(255,255,255,0.55)';
+        ctx.stroke();
+        ctx.font = 'bold 14px Raleway,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('×', _xc, _yc + 1);
         // Resize handle (bottom-right corner) when selected
         if (isSel) {
             const hx = d.x + dw - 10, hy = d.y + dh - 10;
@@ -648,6 +659,19 @@ function drawProfileDiags() {
         }
         ctx.restore();
     }
+}
+// Diameter of the × delete button on each profile diagram, in canvas px.
+const DIAG_X_SIZE = 20;
+function hitDiagDelete(mx, my) {
+    const r = DIAG_X_SIZE / 2;
+    for (let i = profileDiags.length - 1; i >= 0; i--) {
+        const d = profileDiags[i];
+        const dw = d.w || DIAG_DEF_W;
+        const cx = d.x + dw - r - 4, cy = d.y + r + 4;
+        const ddx = mx - cx, ddy = my - cy;
+        if (ddx*ddx + ddy*ddy <= r*r) return d;
+    }
+    return null;
 }
 
 function hitProfileDiag(mx, my) {
@@ -4512,6 +4536,17 @@ cv.addEventListener('mousedown', e => {
         const onx2=ty2, ony2=-tx2, O2=20+off;
         const dLine = distToSegment(p.x, p.y, rv.x1+onx2*O2, rv.y1+ony2*O2, rv.x2+onx2*O2, rv.y2+ony2*O2);
         if (dLine < 12) { selectedMeasure = m.id; render(); return; }
+    }
+    // Profile diagrams — × button check FIRST so clicking it always deletes
+    {
+        const dDel = hitDiagDelete(p.x, p.y);
+        if (dDel) {
+            pushUndo();
+            profileDiags = profileDiags.filter(d => d.id !== dDel.id);
+            if (selectedDiag === dDel.id) selectedDiag = null;
+            persist(); render();
+            return;
+        }
     }
     // Profile diagrams — selectable/draggable/resizable
     if (hitDiagResize(p.x, p.y)) {
