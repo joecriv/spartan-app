@@ -892,6 +892,30 @@ function fsFromCenterNormal(s, center, normal, newKey, newPolygon) {
     }
     return null;
 }
+
+// Rotates s.joints[] 90° CW. Top-left pinned + dim swap means:
+//   'v' joint at pos=X  →  'h' joint at pos=X
+//   'h' joint at pos=Y  →  'v' joint at pos=(oldH - Y)
+//   'd' joint stays diagonal; both snap and otherSnap rotate as points.
+// snap.relX/relY rotate via the standard CW shape-local transform.
+function rotateJointsCW(s, oldH_local) {
+    if (!s.joints || !s.joints.length) return;
+    const rotPt = (relX, relY) => ({ relX: oldH_local - relY, relY: relX });
+    for (const j of s.joints) {
+        if (j.axis === 'd') {
+            if (j.snap)      j.snap      = rotPt(j.snap.relX,      j.snap.relY);
+            if (j.otherSnap) j.otherSnap = rotPt(j.otherSnap.relX, j.otherSnap.relY);
+            continue;
+        }
+        if (j.axis === 'v') {
+            j.axis = 'h';
+        } else if (j.axis === 'h') {
+            j.axis = 'v';
+            j.pos = oldH_local - j.pos;
+        }
+        if (j.snap) j.snap = rotPt(j.snap.relX, j.snap.relY);
+    }
+}
 function lShapeSides(s) {
     const pts = lShapePolygon(s);
     const labels = L_SIDE_LABELS[s.notchCorner || 'ne'];
@@ -2820,6 +2844,24 @@ function drawJointLines(s) {
         ctx.lineWidth   = isSel ? 2.5 : 1.8;
         ctx.setLineDash([5, 4]);
 
+        if (j.axis === 'd' && j.snap && j.otherSnap) {
+            const x1 = s.x + j.snap.relX,      y1 = s.y + j.snap.relY;
+            const x2 = s.x + j.otherSnap.relX, y2 = s.y + j.otherSnap.relY;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            ctx.setLineDash([]);
+            const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+            ctx.font = 'bold 8px Raleway,sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.strokeText('JT', mx, my);
+            ctx.fillStyle = '#e0457b'; ctx.fillText('JT', mx, my);
+            if (isSel) {
+                ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI*2);
+                ctx.fillStyle = '#e0457b'; ctx.fill();
+            }
+            ctx.restore();
+            continue;
+        }
         if (j.axis === 'v') {
             const jx = s.x + clamp(j.pos, 2, s.w - 2);
             // Default endpoints span the bounding box; a snapped joint is
@@ -3614,40 +3656,79 @@ document.getElementById('bsp-cancel').addEventListener('click', () => { hideAllP
 });
 
 // ── Joint popup ──────────────────────────────────────────────
-document.getElementById('joint-btn-v').addEventListener('click', () => {
-    jointOrientation = 'v';
-    document.getElementById('joint-btn-v').classList.add('active');
-    document.getElementById('joint-btn-h').classList.remove('active');
+function _setJointBtnActive(orientation) {
+    jointOrientation = orientation;
+    for (const ax of ['v', 'h', 'd']) {
+        const b = document.getElementById('joint-btn-' + ax);
+        if (b) b.classList.toggle('active', ax === orientation);
+    }
+}
+document.getElementById('joint-btn-v').addEventListener('click', () => _setJointBtnActive('v'));
+document.getElementById('joint-btn-h').addEventListener('click', () => _setJointBtnActive('h'));
+document.getElementById('joint-btn-d').addEventListener('click', () => {
+    if (document.getElementById('joint-btn-d').disabled) return;
+    _setJointBtnActive('d');
 });
-document.getElementById('joint-btn-h').addEventListener('click', () => {
-    jointOrientation = 'h';
-    document.getElementById('joint-btn-h').classList.add('active');
-    document.getElementById('joint-btn-v').classList.remove('active');
-});
+
+// Returns the polygon vertex that is the closest "diagonal intersection"
+// from a given snap corner: the nearest vertex that's not horizontally
+// or vertically aligned with the snap. Returns null if no such vertex.
+function findClosestDiagonalVertex(s, snapCorner) {
+    const poly = (s.shapeType === 'l') ? lShapePolygon(s)
+              : (s.shapeType === 'u') ? uShapePolygon(s)
+              : (s.shapeType === 'bsp') ? bspPolygon(s)
+              : [[s.x, s.y], [s.x+s.w, s.y], [s.x+s.w, s.y+s.h], [s.x, s.y+s.h]];
+    const eps = 0.5;
+    let best = null, bestD = Infinity;
+    for (const [px, py] of poly) {
+        if (Math.abs(px - snapCorner.x) < eps && Math.abs(py - snapCorner.y) < eps) continue;
+        // Skip vertices that share an x or y with the snap (axis-aligned, not diagonal).
+        if (Math.abs(px - snapCorner.x) < eps || Math.abs(py - snapCorner.y) < eps) continue;
+        const d = Math.hypot(px - snapCorner.x, py - snapCorner.y);
+        if (d < bestD) { bestD = d; best = [px, py]; }
+    }
+    return best ? { x: best[0], y: best[1] } : null;
+}
+
 function showJointPopup(shape, pos, cvX, cvY, isCornerSnap = false) {
     hideAllPopups();
     pendingJointShape = shape;
     pendingJointPos = pos;
-    jointOrientation = 'v';
-    document.getElementById('joint-btn-v').classList.add('active');
-    document.getElementById('joint-btn-h').classList.remove('active');
-    // Dynamic title/hint: corner snap vs free placement
+    _setJointBtnActive('v');
     const titleEl = document.getElementById('joint-popup-title');
     const hintEl  = document.getElementById('joint-popup-hint');
     const btnV    = document.getElementById('joint-btn-v');
     const btnH    = document.getElementById('joint-btn-h');
+    const btnD    = document.getElementById('joint-btn-d');
     const okBtn   = document.getElementById('joint-ok');
+    // Diagonal option — only enabled for snapped corners with a valid diagonal target.
+    let diagOK = false;
+    if (isCornerSnap) {
+        const corners = getInsideCornersForJoint(shape);
+        let bestC = null, bestD = 40;
+        for (const c of corners) {
+            const d = Math.hypot(pos.px - c.x, pos.py - c.y);
+            if (d < bestD) { bestD = d; bestC = c; }
+        }
+        if (bestC && findClosestDiagonalVertex(shape, bestC)) diagOK = true;
+    }
+    if (btnD) {
+        btnD.disabled = !diagOK;
+        btnD.style.opacity = diagOK ? '1' : '0.45';
+    }
     if (isCornerSnap) {
         if (titleEl) titleEl.textContent = 'Split at Corner';
-        if (hintEl)  hintEl.textContent  = 'Extend a wall from this inside corner across the shape — creates clean rectangles.';
+        if (hintEl)  hintEl.textContent  = 'Extend a wall from this inside corner — creates clean pieces.';
         if (btnV)    btnV.textContent    = '↕ Continue vertical wall';
         if (btnH)    btnH.textContent    = '↔ Continue horizontal wall';
+        if (btnD)    btnD.textContent    = '⤢ Diagonal across';
         if (okBtn)   okBtn.textContent   = 'Split';
     } else {
         if (titleEl) titleEl.textContent = 'Add Joint Line';
         if (hintEl)  hintEl.textContent  = 'Place a custom joint line. Drag to reposition after.';
         if (btnV)    btnV.textContent    = '↕ Vertical';
         if (btnH)    btnH.textContent    = '↔ Horizontal';
+        if (btnD)    btnD.textContent    = '⤢ Diagonal';
         if (okBtn)   okBtn.textContent   = 'Add Joint';
     }
     currentPopup = 'joint';
@@ -3672,20 +3753,35 @@ function confirmJointPopup() {
             if (d < best) { best = d; snapCorner = c; }
         }
     }
-    let jpos;
-    if (snapCorner) {
-        jpos = jointOrientation === 'v' ? (snapCorner.x - s.x) : (snapCorner.y - s.y);
-        jpos = clamp(jpos, INCH*2, jointOrientation === 'v' ? s.w - INCH*2 : s.h - INCH*2);
-    } else if (jointOrientation === 'v') {
-        jpos = clamp(snap(pos.px - s.x), INCH*2, s.w - INCH*2);
-    } else {
-        jpos = clamp(snap(pos.py - s.y), INCH*2, s.h - INCH*2);
-    }
     pushUndo();
     if (!s.joints) s.joints = [];
-    const newJoint = { id: Date.now(), axis: jointOrientation, pos: jpos };
-    if (snapCorner) newJoint.snap = { relX: snapCorner.x - s.x, relY: snapCorner.y - s.y };
-    s.joints.push(newJoint);
+    if (jointOrientation === 'd') {
+        // Diagonal joint: requires a snap corner. Endpoint is the closest
+        // non-aligned polygon vertex.
+        if (!snapCorner) { hideAllPopups(); return; }
+        const other = findClosestDiagonalVertex(s, snapCorner);
+        if (!other) { alert('No diagonal target available from this corner.'); return; }
+        s.joints.push({
+            id: Date.now(),
+            axis: 'd',
+            pos: 0,
+            snap:      { relX: snapCorner.x - s.x, relY: snapCorner.y - s.y },
+            otherSnap: { relX: other.x - s.x,      relY: other.y - s.y      }
+        });
+    } else {
+        let jpos;
+        if (snapCorner) {
+            jpos = jointOrientation === 'v' ? (snapCorner.x - s.x) : (snapCorner.y - s.y);
+            jpos = clamp(jpos, INCH*2, jointOrientation === 'v' ? s.w - INCH*2 : s.h - INCH*2);
+        } else if (jointOrientation === 'v') {
+            jpos = clamp(snap(pos.px - s.x), INCH*2, s.w - INCH*2);
+        } else {
+            jpos = clamp(snap(pos.py - s.y), INCH*2, s.h - INCH*2);
+        }
+        const newJoint = { id: Date.now(), axis: jointOrientation, pos: jpos };
+        if (snapCorner) newJoint.snap = { relX: snapCorner.x - s.x, relY: snapCorner.y - s.y };
+        s.joints.push(newJoint);
+    }
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('joint-ok').addEventListener('click', confirmJointPopup);
@@ -5039,6 +5135,7 @@ document.addEventListener('keydown', e => {
                     const newFs = fsFromCenterNormal(s, newCenter, newNormal, 'seg' + newSegIdx, newPoly);
                     if (newFs) s.farmSink = newFs;
                 }
+                rotateJointsCW(s, oldH_local);
             } else if (s.shapeType === 'u') {
                 // U polygon vertex indices are stable across uOpening rotations,
                 // so s.checks[].vertexIdx stays unchanged.
@@ -5057,6 +5154,7 @@ document.addEventListener('keydown', e => {
                     const newFs = fsFromCenterNormal(s, newCenter, newNormal, oldFsSegKey, newPoly);
                     if (newFs) s.farmSink = newFs;
                 }
+                rotateJointsCW(s, oldH_local);
             } else if (s.shapeType === 'circle') {
                 // No change — circles are symmetric
             } else {
@@ -5136,6 +5234,7 @@ document.addEventListener('keydown', e => {
                     }
                 }
                 const oldW = s.w; s.w = s.h; s.h = oldW;
+                rotateJointsCW(s, oldH_local);
                 // Rotate farm sink: rect 'top'→'right'→'bottom'→'left'.
                 if (isRect && fsCN) {
                     const newCenter = [oldH_local - fsCN.center[1], fsCN.center[0]];
@@ -7759,6 +7858,40 @@ function clipPolyToStrip(poly, lo, hi, axisX) {
     return _clipPolyAxis(_clipPolyAxis(poly, lo, false, axisX), hi, true, axisX);
 }
 
+// Clips a polygon to one side of an arbitrary line (Sutherland-Hodgman).
+// p1, p2 define the directed line. side > 0 keeps the half where the cross
+// product (p2-p1) × (pt-p1) is positive (right side of the directed line).
+function clipPolyByHalfPlane(poly, p1, p2, side) {
+    if (!poly || poly.length < 3) return [];
+    const eps = 1e-7;
+    const isInside = (pt) => {
+        const cross = (p2[0]-p1[0])*(pt[1]-p1[1]) - (p2[1]-p1[1])*(pt[0]-p1[0]);
+        return side > 0 ? cross >= -eps : cross <= eps;
+    };
+    const lineIntersect = (a, b) => {
+        const x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
+        const x3 = a[0],  y3 = a[1],  x4 = b[0],  y4 = b[1];
+        const denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4);
+        if (Math.abs(denom) < 1e-9) return a;
+        const t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom;
+        return [x1 + t*(x2-x1), y1 + t*(y2-y1)];
+    };
+    const out = [];
+    let prev = poly[poly.length - 1];
+    for (const cur of poly) {
+        const inCur = isInside(cur);
+        const inPrev = isInside(prev);
+        if (inCur) {
+            if (!inPrev) out.push(lineIntersect(prev, cur));
+            out.push(cur);
+        } else if (inPrev) {
+            out.push(lineIntersect(prev, cur));
+        }
+        prev = cur;
+    }
+    return out;
+}
+
 // Returns shape polygon in shape-local INCHES (origin = shape top-left corner)
 // Inject farmhouse sink notch into a local-inches polygon for L/U shapes.
 // The polygon is in shape-local inches (shape.x,y subtracted, divided by INCH).
@@ -8308,10 +8441,53 @@ function slabAllPieces() {
             // Split rect/BSP/L shapes at their joint lines into grid cells
             const vJoints = joints.filter(j => j.axis === 'v').map(j => j.pos / INCH).sort((a,b)=>a-b);
             const hJoints = joints.filter(j => j.axis === 'h').map(j => j.pos / INCH).sort((a,b)=>a-b);
+            const dJoints = joints.filter(j => j.axis === 'd' && j.snap && j.otherSnap);
             const canSplit = (st === 'rect' || st === 'bsp' || st === 'l' || st === 'u') && joints.length > 0;
 
             if (!canSplit) {
                 out.push({ pageIdx:pi, shapeIdx:si, label:baseLabel, pageLabel, wi, hi, shapeType:st, segIdx:null });
+                return;
+            }
+
+            // ── Diagonal joint path: when any 'd' joint exists, fall back to
+            //    iterative polygon clipping. Each cut splits every current
+            //    piece into its two halves; non-empty halves continue.
+            if (dJoints.length > 0) {
+                let pieces = [shapeLocalPolyInches(s)];
+                const splitBy = (p1, p2) => {
+                    const next = [];
+                    for (const pc of pieces) {
+                        const a = clipPolyByHalfPlane(pc, p1, p2, +1);
+                        const b = clipPolyByHalfPlane(pc, p1, p2, -1);
+                        if (a.length >= 3) next.push(a);
+                        if (b.length >= 3) next.push(b);
+                    }
+                    pieces = next;
+                };
+                for (const x of vJoints)  splitBy([x, 0], [x, hi]);
+                for (const y of hJoints)  splitBy([0, y], [wi, y]);
+                for (const j of dJoints)  splitBy(
+                    [j.snap.relX / INCH,      j.snap.relY / INCH],
+                    [j.otherSnap.relX / INCH, j.otherSnap.relY / INCH]
+                );
+                let segCount = 0;
+                for (const piece of pieces) {
+                    const cleaned = cleanClippedPolygon(piece);
+                    if (cleaned.length < 3) continue;
+                    const xs = cleaned.map(p=>p[0]), ys = cleaned.map(p=>p[1]);
+                    const minX=Math.min(...xs), maxX=Math.max(...xs);
+                    const minY=Math.min(...ys), maxY=Math.max(...ys);
+                    const localPoly = cleaned.map(([x,y]) => [+(x-minX).toFixed(6), +(y-minY).toFixed(6)]);
+                    out.push({ pageIdx:pi, shapeIdx:si,
+                        label:`${baseLabel}-${SEG_LETTERS[segCount]||segCount+1}`,
+                        pageLabel,
+                        wi: +(maxX-minX).toFixed(6), hi: +(maxY-minY).toFixed(6),
+                        shapeType:'rect', segIdx:segCount,
+                        segOffset:{ fromX:minX, fromY:minY, toX:maxX, toY:maxY },
+                        segPoly: localPoly
+                    });
+                    segCount++;
+                }
                 return;
             }
 
