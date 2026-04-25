@@ -5587,38 +5587,106 @@ function renderMatDb() {
     }));
 }
 // ── Add Material popup flow ──────────────────────────────────────
+// Picked thicknesses/finishes for the popup are tracked in these Sets
+// so a "+ Custom" button can append to the chip group without losing
+// the user's other selections.
+let _matdbPopThk = new Set();
+let _matdbPopFin = new Set();
+
+function _matdbPopRenderChips(grpId, allValues, selected, allowAddNew) {
+    const grp = document.getElementById(grpId);
+    if (!grp) return;
+    const accent = '#b09030';
+    const chipHtml = allValues.map(v => {
+        const on = selected.has(v);
+        return `<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#ccc;cursor:pointer;padding:4px 9px;background:#1a1a1a;border:1px solid ${on?accent:'#444'};border-radius:3px">
+            <input type="checkbox" data-val="${v.replace(/"/g,'&quot;')}" ${on?'checked':''} style="cursor:pointer;margin:0">
+            ${v}
+        </label>`;
+    }).join('');
+    const addBtn = allowAddNew
+        ? `<button type="button" data-add="${grpId}" style="padding:4px 10px;background:#2a2a2a;color:${accent};border:1px dashed #555;border-radius:3px;font-size:12px;cursor:pointer;font-family:Raleway,sans-serif">+ Custom</button>`
+        : '';
+    grp.innerHTML = chipHtml + addBtn;
+    // Wire checkboxes
+    grp.querySelectorAll('input[type=checkbox]').forEach(inp => {
+        inp.addEventListener('change', e => {
+            const v = e.target.dataset.val;
+            if (e.target.checked) selected.add(v); else selected.delete(v);
+            // Re-render so the chip border updates
+            _matdbPopRenderChips(grpId, allValues, selected, allowAddNew);
+        });
+    });
+    // Wire add-new button
+    if (allowAddNew) {
+        const btn = grp.querySelector('button[data-add]');
+        if (btn) btn.addEventListener('click', () => {
+            const v = (prompt(grpId === 'matdb-pop-finish-grp' ? 'New finish name:' : 'New value:') || '').trim();
+            if (!v) return;
+            if (!allValues.includes(v)) allValues.push(v);
+            selected.add(v);
+            _matdbPopRenderChips(grpId, allValues, selected, allowAddNew);
+        });
+    }
+}
+
+function _matdbPopPopulateBrand() {
+    const sel = document.getElementById('matdb-pop-supplier');
+    const brands = [...new Set(matDb.map(d => d.supplier).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">— Select brand —</option>'
+        + brands.map(b => `<option value="${b.replace(/"/g,'&quot;')}">${b}</option>`).join('')
+        + '<option value="__NEW__">+ New brand…</option>';
+    sel.value = '';
+    sel.onchange = () => {
+        if (sel.value === '__NEW__') {
+            const v = (prompt('New brand name:') || '').trim();
+            if (v) {
+                const opt = document.createElement('option');
+                opt.value = v; opt.textContent = v;
+                // Insert before the "+ New brand…" option
+                sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+                sel.value = v;
+            } else {
+                sel.value = '';
+            }
+        }
+    };
+}
+
 function openMatdbPopup() {
     hideAllPopups();
     currentPopup = 'matdb';
-    // Populate the stone-type dropdown
     const typeSel = document.getElementById('matdb-pop-type');
     typeSel.innerHTML = '<option value="">— Type —</option>' +
         STONE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
-    // Reset fields
     document.getElementById('matdb-pop-name').value = '';
-    document.getElementById('matdb-pop-supplier').value = '';
     typeSel.value = '';
     document.getElementById('matdb-pop-cost').value = '';
     document.getElementById('matdb-pop-slabw').value = 129;
     document.getElementById('matdb-pop-slabh').value = 63;
-    document.getElementById('matdb-pop-thick').value = '2cm, 3cm';
-    document.getElementById('matdb-pop-finish').value = 'Polished';
-    // Show centered
+    _matdbPopPopulateBrand();
+    _matdbPopThk = new Set(['2cm', '3cm']);
+    _matdbPopFin = new Set(['Polished']);
+    // Thicknesses: dropdown of known values, no custom add (per spec)
+    _matdbPopRenderChips('matdb-pop-thick-grp', allKnownThicknesses(), _matdbPopThk, false);
+    // Finishes: chip group + custom add (new finishes auto-persist via matDb)
+    _matdbPopRenderChips('matdb-pop-finish-grp', [...allKnownFinishes()], _matdbPopFin, true);
     const el = document.getElementById('matdb-popup');
-    showPopupAt(el, window.innerWidth/2 - 180, Math.max(40, window.innerHeight/2 - 280));
+    showPopupAt(el, window.innerWidth/2 - 190, Math.max(40, window.innerHeight/2 - 290));
     setTimeout(() => document.getElementById('matdb-pop-name').focus(), 50);
 }
+
 function confirmMatdbPopup() {
     const name = document.getElementById('matdb-pop-name').value.trim();
     if (!name) { alert('Color name is required.'); return; }
-    const supplier = document.getElementById('matdb-pop-supplier').value.trim();
+    let supplier = document.getElementById('matdb-pop-supplier').value;
+    if (supplier === '__NEW__') supplier = '';   // user selected the placeholder
     const stoneType = document.getElementById('matdb-pop-type').value;
     const costPerSlab = parseFloat(document.getElementById('matdb-pop-cost').value) || 0;
     const slabW = parseFloat(document.getElementById('matdb-pop-slabw').value) || 129;
     const slabH = parseFloat(document.getElementById('matdb-pop-slabh').value) || 63;
-    const splitList = v => v.split(',').map(s => s.trim()).filter(Boolean);
-    const thicknesses = splitList(document.getElementById('matdb-pop-thick').value);
-    const finishes    = splitList(document.getElementById('matdb-pop-finish').value);
+    const thicknesses = [..._matdbPopThk];
+    const finishes    = [..._matdbPopFin];
     matDb.push({
         id: matDbNextId++, name, supplier, stoneType,
         thicknesses: thicknesses.length ? thicknesses : ['2cm','3cm'],
@@ -5628,13 +5696,14 @@ function confirmMatdbPopup() {
     saveMatDb();
     hideAllPopups();
     renderMatDb();
-    renderMaterials();   // refresh dropdowns in any open material rows
-    renderCostsPanel();  // refresh slab-prices list
+    renderMaterials();
+    renderCostsPanel();
 }
+
 document.getElementById('matdb-add-btn').addEventListener('click', openMatdbPopup);
 document.getElementById('matdb-pop-ok').addEventListener('click', confirmMatdbPopup);
 document.getElementById('matdb-pop-cancel').addEventListener('click', hideAllPopups);
-['matdb-pop-name','matdb-pop-supplier','matdb-pop-cost','matdb-pop-slabw','matdb-pop-slabh','matdb-pop-thick','matdb-pop-finish'].forEach(id => {
+['matdb-pop-name','matdb-pop-cost','matdb-pop-slabw','matdb-pop-slabh'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
         if (e.key === 'Enter')  { e.preventDefault(); confirmMatdbPopup(); }
         if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
