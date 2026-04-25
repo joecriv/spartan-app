@@ -5507,6 +5507,8 @@ const SERVICE_RATE_DEFS = [
     { key:'evierVasque',   label:'Evier vasque',    desc:'Trou pour lavabo type vasque',                       unit:'each' },
     { key:'cooktop',       label:'Cooktop',         desc:'Trou pour cuisinière (cooktop)',                     unit:'each' },
     { key:'farmSink',      label:'Farmhouse sink',  desc:'Évier farmhouse (intégré)',                          unit:'each' },
+    { key:'outlet',        label:'Outlet',          desc:'Outlet (2"×4")',                                     unit:'each' },
+    { key:'bocci',         label:'Bocci outlet',    desc:'Bocci outlet (2" rond)',                             unit:'each' },
     { key:'fini45',        label:'Fini 45',         desc:'Finition laminée en 45',                             unit:'lf' },
     { key:'lamine',        label:'Lamine',          desc:'Assemblage des morceaux (Laminage)',                  unit:'lf' },
     { key:'polissageSous', label:'Polissage sous',  desc:'Polissage sous morceau',                             unit:'each' },
@@ -6557,15 +6559,18 @@ function calcPageEdgeLinearFt(page, edgeType) {
 
 function calcPageSinkCounts(page) {
     let overmount = 0, undermount = 0, vasque = 0, cooktops = 0, farmSinks = 0;
+    let outlets = 0, boccis = 0;
     for (const s of page.shapes) {
         if (s.subtype === 'sink_overmount') overmount++;
         else if (s.subtype === 'sink_undermount') undermount++;
         else if (s.subtype === 'sink_vasque') vasque++;
         else if (s.subtype === 'cooktop') cooktops++;
+        else if (s.subtype === 'outlet') outlets++;
+        else if (s.subtype === 'bocci') boccis++;
         // Farmhouse sinks are a property on a countertop shape, not a separate subtype
         if (!s.subtype && s.farmSink) farmSinks++;
     }
-    return { overmount, undermount, vasque, cooktops, farmSinks };
+    return { overmount, undermount, vasque, cooktops, farmSinks, outlets, boccis };
 }
 
 // ── Compute service quantities for the new rate model ────────
@@ -6573,6 +6578,7 @@ function calcPageSinkCounts(page) {
 function calcServiceQtys() {
     let pencilLf = 0, coupeSqft = 0, dektonCoupeSqft = 0;
     let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0, farmSinkQty = 0;
+    let outletQty = 0, bocciQty = 0;
     let fini45Lf = 0, lamineLf = 0;
     let totalSqft = 0;
     for (const page of pages) {
@@ -6589,6 +6595,8 @@ function calcServiceQtys() {
         evierVasque += sinks.vasque;
         cooktopQty += sinks.cooktops;
         farmSinkQty += sinks.farmSinks;
+        outletQty += sinks.outlets;
+        bocciQty += sinks.boccis;
         // Material area — split by Dekton vs non-Dekton
         for (const s of page.shapes) {
             if (s.subtype) continue;
@@ -6616,6 +6624,7 @@ function calcServiceQtys() {
         pencilLf, coupeSqft, dektonCoupeSqft,
         evierOver, evierUnder, evierVasque,
         cooktopQty, farmSinkQty,
+        outletQty, bocciQty,
         fini45Lf, lamineLf,
         polissageSousQty: pricingData.polissageSousQty || 0,
         installationSqft: totalSqft,
@@ -6638,6 +6647,8 @@ function getServiceLineItems() {
             case 'evierVasque':   qty = q.evierVasque;       unitLabel = `${qty} trou(s)`; break;
             case 'cooktop':       qty = q.cooktopQty;        unitLabel = `${qty} trou(s)`; break;
             case 'farmSink':      qty = q.farmSinkQty;       unitLabel = `${qty} évier(s)`; break;
+            case 'outlet':        qty = q.outletQty;         unitLabel = `${qty} outlet(s)`; break;
+            case 'bocci':         qty = q.bocciQty;          unitLabel = `${qty} bocci(s)`; break;
             case 'fini45':        qty = q.fini45Lf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'lamine':        qty = q.lamineLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `× ${qty}`; break;
