@@ -9929,8 +9929,10 @@ function calcPagePricing(page) {
     const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
     const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
     const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
+    const outletCost      = sinks.outlets    * (pricingData.rates.outlet      || 0);
+    const bocciCost       = sinks.boccis     * (pricingData.rates.bocci       || 0);
 
-    const servicesCost  = pencilCost + fini45Cost + lamineCost + evierOverCost + evierUnderCost + evierVasqueCost + cooktopCost + farmSinkCost;
+    const servicesCost  = pencilCost + fini45Cost + lamineCost + evierOverCost + evierUnderCost + evierVasqueCost + cooktopCost + farmSinkCost + outletCost + bocciCost;
     const pageSubtotal  = matCost + cutCost + servicesCost;
 
     return {
@@ -9938,6 +9940,7 @@ function calcPagePricing(page) {
         matCost, cutCost, cutRate,
         edgeFootage, pencilLf, fini45Lf, lamineLf, pencilCost, fini45Cost, lamineCost,
         sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost, farmSinkCost,
+        outletCost, bocciCost,
         servicesCost, pageSubtotal
     };
 }
@@ -9962,17 +9965,20 @@ function calcPageOptions(page) {
     const fini45Cost = fini45Lf * (pricingData.rates.fini45 || 0);
     const lamineCost = lamineLf * (pricingData.rates.lamine || 0);
 
-    // Sink/cooktop/farmhouse (shared across options)
+    // Sink/cooktop/farmhouse + outlets/boccis (shared across options)
     const sinks = calcPageSinkCounts(page);
     const evierOverCost   = sinks.overmount  * (pricingData.rates.evierOver   || 0);
     const evierUnderCost  = sinks.undermount * (pricingData.rates.evierUnder  || 0);
     const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
     const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
     const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
+    const outletCost      = sinks.outlets    * (pricingData.rates.outlet      || 0);
+    const bocciCost       = sinks.boccis     * (pricingData.rates.bocci       || 0);
 
     const servicesCost = pencilCost + fini45Cost + lamineCost
                        + evierOverCost + evierUnderCost + evierVasqueCost
-                       + cooktopCost + farmSinkCost;
+                       + cooktopCost + farmSinkCost
+                       + outletCost + bocciCost;
 
     // Per-option (material + cutting); services are added to each option's subtotal.
     // Material cost uses the SAME slab-based calculation as the pricing tab (respects
@@ -10336,6 +10342,8 @@ function generateProposal() {
         if (po.sinks.vasque     > 0) nServiceLines++;
         if (po.sinks.cooktops   > 0) nServiceLines++;
         if (po.sinks.farmSinks  > 0) nServiceLines++;
+        if (po.sinks.outlets    > 0) nServiceLines++;
+        if (po.sinks.boccis     > 0) nServiceLines++;
         if (nServiceLines > 0) h += 8 + nServiceLines * 9 + 7;
         if (po.options.length === 0) {
             if (po.servicesCost > 0) h += 26;
@@ -10502,6 +10510,8 @@ function generateProposal() {
         if (sinks.vasque     > 0) serviceRows.push(['Évier vasque',     sinks.vasque]);
         if (sinks.cooktops   > 0) serviceRows.push(['Cooktop',          sinks.cooktops]);
         if (sinks.farmSinks  > 0) serviceRows.push(['Farmhouse sink',   sinks.farmSinks]);
+        if (sinks.outlets    > 0) serviceRows.push(['Outlet',           sinks.outlets]);
+        if (sinks.boccis     > 0) serviceRows.push(['Bocci outlet',     sinks.boccis]);
         if (serviceRows.length > 0) {
             doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.setTextColor(...BRAND);
             doc.text('SERVICES', px+5, py2);
