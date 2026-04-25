@@ -3670,22 +3670,53 @@ document.getElementById('joint-btn-d').addEventListener('click', () => {
     _setJointBtnActive('d');
 });
 
-// Returns the polygon vertex that is the closest "diagonal intersection"
-// from a given snap corner: the nearest vertex that's not horizontally
-// or vertically aligned with the snap. Returns null if no such vertex.
+// Returns the polygon vertex that lies along the corner's inward bisector
+// from the snap corner — i.e., the natural "miter direction" pointing into
+// the polygon material, away from the cut-out region. For a CW polygon in
+// screen coords, the inward bisector is the sum of each adjacent edge's
+// right-normal (rotate CW 90°). The chosen vertex maximizes the dot product
+// of (vertex - snap)/|...| with that bisector direction.
 function findClosestDiagonalVertex(s, snapCorner) {
     const poly = (s.shapeType === 'l') ? lShapePolygon(s)
               : (s.shapeType === 'u') ? uShapePolygon(s)
               : (s.shapeType === 'bsp') ? bspPolygon(s)
               : [[s.x, s.y], [s.x+s.w, s.y], [s.x+s.w, s.y+s.h], [s.x, s.y+s.h]];
     const eps = 0.5;
-    let best = null, bestD = Infinity;
+    // Locate the snap corner in the polygon
+    let snapIdx = -1;
+    for (let i = 0; i < poly.length; i++) {
+        if (Math.abs(poly[i][0] - snapCorner.x) < eps && Math.abs(poly[i][1] - snapCorner.y) < eps) {
+            snapIdx = i; break;
+        }
+    }
+    if (snapIdx < 0) return null;
+    const n = poly.length;
+    const prev = poly[(snapIdx - 1 + n) % n];
+    const cur  = poly[snapIdx];
+    const next = poly[(snapIdx + 1) % n];
+    const ix = cur[0] - prev[0], iy = cur[1] - prev[1];
+    const ox = next[0] - cur[0], oy = next[1] - cur[1];
+    const iLen = Math.hypot(ix, iy) || 1;
+    const oLen = Math.hypot(ox, oy) || 1;
+    // Right-normal of each edge in screen-CW (interior side of a CW polygon).
+    const inN  = [-iy / iLen,  ix / iLen];
+    const outN = [-oy / oLen,  ox / oLen];
+    let bx = inN[0] + outN[0];
+    let by = inN[1] + outN[1];
+    const bLen = Math.hypot(bx, by);
+    if (bLen < 1e-6) return null; // 180° corner — no defined inward direction
+    bx /= bLen; by /= bLen;
+    // Pick the non-aligned vertex whose direction from snap is most parallel
+    // to the inward bisector (highest dot product, capped at 1).
+    let best = null, bestDot = -2;
     for (const [px, py] of poly) {
         if (Math.abs(px - snapCorner.x) < eps && Math.abs(py - snapCorner.y) < eps) continue;
-        // Skip vertices that share an x or y with the snap (axis-aligned, not diagonal).
         if (Math.abs(px - snapCorner.x) < eps || Math.abs(py - snapCorner.y) < eps) continue;
-        const d = Math.hypot(px - snapCorner.x, py - snapCorner.y);
-        if (d < bestD) { bestD = d; best = [px, py]; }
+        const dx = px - snapCorner.x, dy = py - snapCorner.y;
+        const dLen = Math.hypot(dx, dy);
+        if (dLen < eps) continue;
+        const dot = (dx / dLen) * bx + (dy / dLen) * by;
+        if (dot > bestDot) { bestDot = dot; best = [px, py]; }
     }
     return best ? { x: best[0], y: best[1] } : null;
 }
