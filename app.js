@@ -1118,6 +1118,7 @@ function load() {
 function handles(s) {
     if (s.shapeType === 'l') return [];
     if (s.shapeType === 'u') return [];
+    if (s.shapeType === 'bsp') return [];
     if (s.shapeType === 'circle') return [];
     const { x, y, w, h } = s;
     return [
@@ -1435,16 +1436,8 @@ function applyResize(pos) {
     }
     if (x < 0) { w += x; x = 0; } if (y < 0) { h += y; y = 0; }
     if (x+w > CW) w = CW-x; if (y+h > CH) h = CH-y;
-    let minW = INCH, minH = INCH;
-    if (s.shapeType === 'bsp') {
-        minW = Math.max(INCH, (s.pW || 0) + INCH);
-        minH = Math.max(INCH, (s.pH || 0) + INCH);
-    }
-    w = Math.max(minW, w); h = Math.max(minH, h);
+    w = Math.max(INCH,w); h = Math.max(INCH,h);
     Object.assign(s, { x, y, w, h });
-    if (s.shapeType === 'bsp' && s.pX !== undefined) {
-        s.pX = Math.max(0, Math.min(s.pX, s.w - s.pW));
-    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1481,6 +1474,14 @@ function hitShapeLine(mx, my) {
                 const nk = (k + 1) % poly.length;
                 if (distToSegment(mx, my, poly[k][0], poly[k][1], poly[nk][0], poly[nk][1]) < EDGE_DRAG_THRESH) {
                     return { s, kind: 'u', edgeIdx: k };
+                }
+            }
+        } else if (s.shapeType === 'bsp') {
+            const poly = bspPolygon(s);
+            for (let k = 0; k < poly.length; k++) {
+                const nk = (k + 1) % poly.length;
+                if (distToSegment(mx, my, poly[k][0], poly[k][1], poly[nk][0], poly[nk][1]) < EDGE_DRAG_THRESH) {
+                    return { s, kind: 'bsp', edgeIdx: k };
                 }
             }
         }
@@ -1530,6 +1531,8 @@ function applyEdgeResize(dxa, dya) {
         applyLEdgeResize(s, edgeResizing.edgeIdx, dxa, dya, base);
     } else if (kind === 'u') {
         applyUEdgeResize(s, edgeResizing.edgeIdx, dxa, dya, base);
+    } else if (kind === 'bsp') {
+        applyBspEdgeResize(s, edgeResizing.edgeIdx, dxa, dya, base);
     }
 }
 
@@ -1668,6 +1671,59 @@ function applyUEdgeResize(s, edgeIdx, dxa, dya, base) {
     if (s.y < 0) s.y = 0;
     if (s.x + s.w > CW) s.x = CW - s.w;
     if (s.y + s.h > CH) s.y = CH - s.h;
+}
+
+function applyBspEdgeResize(s, edgeIdx, dxa, dya, base) {
+    let { x, y, w, h } = base;
+    let pW = base.pW, pH = base.pH;
+    const oldPX = base.pX !== undefined ? base.pX : Math.round((base.w - base.pW) / 2);
+    let pX = oldPX;
+    switch (edgeIdx) {
+        case 0: { // top of protrusion
+            const ny = Math.max(0, Math.min(base.y + base.h - pH - INCH, base.y + dya));
+            y = ny; h = base.h - (ny - base.y);
+            break;
+        }
+        case 1: { // right of protrusion
+            const maxPW = base.w - oldPX;
+            pW = Math.max(INCH, Math.min(maxPW, base.pW + dxa));
+            break;
+        }
+        case 2: case 6: { // step (right or left)
+            pH = Math.max(INCH, Math.min(base.h - INCH, base.pH + dya));
+            break;
+        }
+        case 3: { // right of base
+            const minW = oldPX + pW;
+            w = Math.max(minW, Math.min(CW - base.x, base.w + dxa));
+            break;
+        }
+        case 4: { // bottom
+            h = Math.max(pH + INCH, Math.min(CH - base.y, base.h + dya));
+            break;
+        }
+        case 5: { // left of base — preserve protrusion absolute position
+            const maxNewX = base.x + base.w - pW - INCH;
+            const newX = Math.max(0, Math.min(maxNewX, base.x + dxa));
+            const dxEff = newX - base.x;
+            x = newX;
+            w = base.w - dxEff;
+            pX = oldPX - dxEff;
+            if (pX < 0) pX = 0;
+            if (pX + pW > w) pX = Math.max(0, w - pW);
+            break;
+        }
+        case 7: { // left of protrusion — preserve protrusion right side
+            const oldRight = oldPX + base.pW;
+            const newPX = Math.max(0, Math.min(oldRight - INCH, oldPX + dxa));
+            pX = newPX;
+            pW = oldRight - newPX;
+            break;
+        }
+    }
+    if (x + w > CW) w = CW - x;
+    if (y + h > CH) h = CH - y;
+    Object.assign(s, { x, y, w, h, pW, pH, pX });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2222,6 +2278,19 @@ function drawLShape(s, sel) {
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
     }
 
+    // Per-edge resize handles (drag any edge midpoint to resize)
+    if (sel) {
+        const hw = Math.floor(HND/2);
+        for (let i = 0; i < basePoly.length; i++) {
+            const j = (i+1) % basePoly.length;
+            const mx = (basePoly[i][0] + basePoly[j][0]) / 2;
+            const my = (basePoly[i][1] + basePoly[j][1]) / 2;
+            ctx.fillStyle = '#fff'; ctx.strokeStyle = '#b09030'; ctx.lineWidth = 1.5;
+            ctx.fillRect(mx-hw, my-hw, HND, HND);
+            ctx.strokeRect(mx-hw, my-hw, HND, HND);
+        }
+    }
+
     // 5. Farmhouse sink cutout outline + label
     drawFsOutlineLabel(s);
 }
@@ -2406,6 +2475,18 @@ function drawUShape(s, sel) {
         for (let i=1;i<polyOut.length;i++) ctx.lineTo(polyOut[i][0], polyOut[i][1]);
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
     }
+    // Per-edge resize handles
+    if (sel) {
+        const hw = Math.floor(HND/2);
+        for (let i = 0; i < basePoly.length; i++) {
+            const j = (i+1) % basePoly.length;
+            const mx = (basePoly[i][0] + basePoly[j][0]) / 2;
+            const my = (basePoly[i][1] + basePoly[j][1]) / 2;
+            ctx.fillStyle = '#fff'; ctx.strokeStyle = '#b09030'; ctx.lineWidth = 1.5;
+            ctx.fillRect(mx-hw, my-hw, HND, HND);
+            ctx.strokeRect(mx-hw, my-hw, HND, HND);
+        }
+    }
     drawFsOutlineLabel(s);
 }
 
@@ -2444,17 +2525,20 @@ function drawBSP(s, sel) {
         const j=(i+1)%8;
         drawDimLine(pts[i][0],pts[i][1],pts[j][0],pts[j][1], Math.hypot(pts[j][0]-pts[i][0],pts[j][1]-pts[i][1]), s.id, `dim_b${i}`);
     }
-    // Selection outline
+    // Selection outline + per-edge resize handles
     if (sel) {
         ctx.save(); ctx.strokeStyle='#b09030'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
         ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
         for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
         const hw = Math.floor(HND/2);
-        for (const h of handles(s)) {
+        for (let i = 0; i < pts.length; i++) {
+            const j = (i+1) % pts.length;
+            const mx = (pts[i][0] + pts[j][0]) / 2;
+            const my = (pts[i][1] + pts[j][1]) / 2;
             ctx.fillStyle = '#fff'; ctx.strokeStyle = '#b09030'; ctx.lineWidth = 1.5;
-            ctx.fillRect(h.px-hw, h.py-hw, HND, HND);
-            ctx.strokeRect(h.px-hw, h.py-hw, HND, HND);
+            ctx.fillRect(mx-hw, my-hw, HND, HND);
+            ctx.strokeRect(mx-hw, my-hw, HND, HND);
         }
     }
 }
