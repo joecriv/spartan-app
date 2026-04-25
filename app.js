@@ -6929,40 +6929,195 @@ function regCloseHistory() {
     regHistoryRows = [];
 }
 
-async function regRestoreFromHistory(historyId) {
-    const h = regHistoryRows.find(r => r.history_id === historyId);
+// ── Shop-wide history search ("Find lost quote") ─────────────────
+// Searches the entire quotes_history table for the current shop, so a
+// quote that was overwritten or deleted entirely (and therefore doesn't
+// appear in the live list or the trash) can still be found and resurrected.
+let regDbHistoryRows = [];
+let regDbHistorySearch = '';
+let regDbHistoryHasMore = false;
+const REG_DB_HISTORY_PAGE = 50;
+
+async function regOpenDbHistory() {
+    if (!currentShopId) { alert('Not signed in.'); return; }
+    regDbHistoryRows = [];
+    regDbHistorySearch = '';
+    regDbHistoryHasMore = false;
+    await regFetchDbHistoryPage();
+    regShowDbHistoryModal();
+}
+
+async function regFetchDbHistoryPage() {
+    const oldest = regDbHistoryRows.length ? regDbHistoryRows[regDbHistoryRows.length - 1].snapshot_at : null;
+    let q = _sb.from('quotes_history')
+        .select('history_id, quote_id, snapshot_at, order_number, job_name, client_name, address, status, created_by_email, deleted_at')
+        .eq('shop_id', currentShopId)
+        .order('snapshot_at', { ascending: false })
+        .limit(REG_DB_HISTORY_PAGE + 1);
+    if (oldest) q = q.lt('snapshot_at', oldest);
+    if (regDbHistorySearch) {
+        const s = `%${regDbHistorySearch.replace(/[%_]/g, m => '\\' + m)}%`;
+        q = q.or(`job_name.ilike.${s},client_name.ilike.${s},order_number.ilike.${s},address.ilike.${s},created_by_email.ilike.${s}`);
+    }
+    const { data, error } = await q;
+    if (error) {
+        console.error('db-history fetch failed:', error);
+        alert('Failed to load history: ' + (error.message || error) + '\n\nMake sure supabase_migration_quotes_history.sql has been run in the Supabase SQL Editor.');
+        return;
+    }
+    const rows = data || [];
+    regDbHistoryHasMore = rows.length > REG_DB_HISTORY_PAGE;
+    if (regDbHistoryHasMore) rows.pop();
+    regDbHistoryRows = regDbHistoryRows.concat(rows);
+}
+
+async function regResetDbHistorySearch(term) {
+    regDbHistorySearch = (term || '').trim();
+    regDbHistoryRows = [];
+    regDbHistoryHasMore = false;
+    await regFetchDbHistoryPage();
+    regRenderDbHistoryList();
+}
+
+async function regLoadMoreDbHistory() {
+    await regFetchDbHistoryPage();
+    regRenderDbHistoryList();
+}
+
+function regShowDbHistoryModal() {
+    let overlay = document.getElementById('reg-db-history-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'reg-db-history-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:20000;display:flex;align-items:center;justify-content:center';
+        overlay.innerHTML = `
+            <div style="background:#1a1a1a;border:1px solid #333;border-radius:6px;width:680px;max-width:94vw;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.7);font-family:Raleway,sans-serif">
+                <div style="padding:12px 16px;border-bottom:1px solid #333;display:flex;align-items:center;justify-content:space-between">
+                    <div>
+                        <h3 style="margin:0;color:#e0ddd5;font-size:13px;font-weight:600">Find Lost Quote</h3>
+                        <div style="color:#888;font-size:10px;margin-top:2px">Every save in this shop, newest first. Use this if a quote disappeared or got overwritten.</div>
+                    </div>
+                    <button id="reg-db-history-close" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;padding:0 4px">&times;</button>
+                </div>
+                <div style="padding:8px 16px;border-bottom:1px solid #2a2a2a">
+                    <input id="reg-db-history-search" type="text" placeholder="Search client, job, order #, address, rep..." style="width:100%;padding:6px 8px;background:#0e0e0e;border:1px solid #333;color:#e0ddd5;border-radius:3px;font-size:11px;font-family:Raleway,sans-serif">
+                </div>
+                <div id="reg-db-history-list" style="flex:1;overflow-y:auto;padding:8px"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', e => { if (e.target === overlay) regCloseDbHistory(); });
+        document.getElementById('reg-db-history-close').addEventListener('click', regCloseDbHistory);
+        const searchInp = document.getElementById('reg-db-history-search');
+        let _to = null;
+        searchInp.addEventListener('input', e => {
+            clearTimeout(_to);
+            const v = e.target.value;
+            _to = setTimeout(() => regResetDbHistorySearch(v), 250);
+        });
+    }
+    overlay.style.display = 'flex';
+    regRenderDbHistoryList();
+}
+
+function regCloseDbHistory() {
+    const overlay = document.getElementById('reg-db-history-overlay');
+    if (overlay) overlay.style.display = 'none';
+    regDbHistoryRows = [];
+    regDbHistorySearch = '';
+}
+
+function regRenderDbHistoryList() {
+    const list = document.getElementById('reg-db-history-list');
+    if (!list) return;
+    if (!regDbHistoryRows.length) {
+        list.innerHTML = `<div style="color:#666;font-size:11px;text-align:center;padding:24px 0">${regDbHistorySearch ? 'No snapshots match this search.' : 'No history yet.'}</div>`;
+        return;
+    }
+    // Tag whether the live quote still exists in the local registry (active or trash).
+    const liveIds = new Set(regQuotes.map(q => q.id));
+    const trashIds = new Set(regQuotes.filter(q => q.deleted_at).map(q => q.id));
+    const rows = regDbHistoryRows.map(h => {
+        const when = new Date(h.snapshot_at).toLocaleString();
+        const rep = (h.created_by_email||'').split('@')[0] || '?';
+        let tag = '';
+        if (!liveIds.has(h.quote_id)) tag = `<span style="color:#cc6666;font-size:9px;margin-left:6px;border:1px solid #553030;padding:1px 4px;border-radius:2px">missing</span>`;
+        else if (trashIds.has(h.quote_id)) tag = `<span style="color:#aa7777;font-size:9px;margin-left:6px;border:1px solid #503838;padding:1px 4px;border-radius:2px">in trash</span>`;
+        return `<div style="padding:8px 10px;border:1px solid #2a2a2a;border-radius:4px;margin-bottom:6px;background:#141414">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <div style="min-width:0;flex:1">
+                    <div style="color:#ccc;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.client_name || '(no client)'} &mdash; ${h.job_name || '(no job)'}${tag}</div>
+                    <div style="color:#888;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.order_number || ''} &middot; ${rep} &middot; saved ${when} &middot; <span style="color:#555">id:${(h.quote_id||'').slice(0,8)}</span></div>
+                </div>
+                <button onclick="regRestoreFromDbHistory('${h.history_id}')" style="background:#2a2a2a;border:1px solid #555;color:#b09030;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:10px;flex-shrink:0;font-family:Raleway,sans-serif">Restore</button>
+            </div>
+        </div>`;
+    }).join('');
+    const loadMore = regDbHistoryHasMore
+        ? `<button onclick="regLoadMoreDbHistory()" style="width:100%;margin-top:6px;padding:8px;background:#1a1a1a;border:1px dashed #444;color:#888;border-radius:4px;cursor:pointer;font-size:11px;font-family:Raleway,sans-serif">Load older snapshots</button>`
+        : `<div style="text-align:center;color:#555;font-size:9px;padding:8px;font-style:italic">${regDbHistoryRows.length} snapshot${regDbHistoryRows.length === 1 ? '' : 's'} loaded — that's everything matching.</div>`;
+    list.innerHTML = rows + loadMore;
+}
+
+async function regRestoreFromDbHistory(historyId) {
+    const h = regDbHistoryRows.find(r => r.history_id === historyId);
     if (!h) return;
+    const lbl = `${h.client_name || '(no client)'} \u2014 ${h.job_name || '(no job)'}`;
+    const restoredId = await regRestoreFromHistorySnapshot(historyId, lbl);
+    if (!restoredId) return;
+    regCloseDbHistory();
+    await regRefresh();
+    alert(`Restored "${lbl}". You can find it in the active quotes list.`);
+}
+
+// Resurrects a quote from a history snapshot. Works whether the live row
+// still exists, was soft-deleted, or was hard-deleted entirely. Uses UPSERT
+// keyed on quote_id so an empty quotes table still gets the row back.
+async function regRestoreFromHistorySnapshot(historyId, sourceLabel) {
     const { data: full, error: fetchErr } = await _sb.from('quotes_history')
-        .select('quote_id, order_number, job_name, client_name, address, status, quote_data, form_data, pricing_data')
+        .select('quote_id, shop_id, snapshot_at, order_number, job_name, client_name, address, status, quote_data, form_data, pricing_data, created_by, created_by_email, created_at')
         .eq('history_id', historyId)
         .single();
     if (fetchErr || !full) {
         alert('Failed to fetch snapshot: ' + ((fetchErr && fetchErr.message) || 'not found'));
-        return;
+        return false;
     }
-    const when = new Date(h.snapshot_at).toLocaleString();
-    if (!confirm(`Restore this version?\n\n${full.client_name || '(no client)'} \u2014 ${full.job_name || '(no job)'}\nSaved ${when}\n\nThe current version will itself be snapshotted to history first, so this is reversible.`)) return;
-    const { error: updErr } = await _sb.from('quotes')
-        .update({
-            order_number: full.order_number,
-            job_name:     full.job_name,
-            client_name:  full.client_name,
-            address:      full.address,
-            status:       full.status,
-            quote_data:   full.quote_data,
-            form_data:    full.form_data,
-            pricing_data: full.pricing_data,
-            updated_at:   new Date().toISOString()
-        })
-        .eq('id', full.quote_id);
-    if (updErr) {
-        alert('Restore failed: ' + (updErr.message || updErr));
-        return;
+    const when = new Date(full.snapshot_at).toLocaleString();
+    const lbl = sourceLabel || `${full.client_name || '(no client)'} \u2014 ${full.job_name || '(no job)'}`;
+    if (!confirm(`Restore this version?\n\n${lbl}\nSaved ${when}\n\nIf the quote was deleted, it will be recreated. If it still exists, the current version is snapshotted to history first (reversible).`)) return false;
+    const { error: upErr } = await _sb.from('quotes').upsert({
+        id:               full.quote_id,
+        shop_id:          full.shop_id,
+        created_by:       full.created_by,
+        created_by_email: full.created_by_email,
+        created_at:       full.created_at,
+        order_number:     full.order_number,
+        job_name:         full.job_name,
+        client_name:      full.client_name,
+        address:          full.address,
+        status:           full.status || 'draft',
+        quote_data:       full.quote_data,
+        form_data:        full.form_data,
+        pricing_data:     full.pricing_data,
+        updated_at:       new Date().toISOString(),
+        deleted_at:       null
+    }, { onConflict: 'id' });
+    if (upErr) {
+        alert('Restore failed: ' + (upErr.message || upErr));
+        return false;
     }
+    return full.quote_id;
+}
+
+async function regRestoreFromHistory(historyId) {
+    const h = regHistoryRows.find(r => r.history_id === historyId);
+    if (!h) return;
+    const restoredId = await regRestoreFromHistorySnapshot(historyId);
+    if (!restoredId) return;
     regCloseHistory();
     await regRefresh();
-    if (currentQuoteId === full.quote_id) {
-        await loadQuoteFromDb(full.quote_id);
+    if (currentQuoteId === restoredId) {
+        await loadQuoteFromDb(restoredId);
     }
     alert('Restored. The previous version was saved to history before the restore.');
 }
@@ -7007,6 +7162,7 @@ document.querySelectorAll('.reg-filter-btn').forEach(btn => {
     });
 });
 document.getElementById('reg-refresh-btn').addEventListener('click', regRefresh);
+document.getElementById('reg-find-lost-btn').addEventListener('click', regOpenDbHistory);
 document.getElementById('reg-new-btn').addEventListener('click', async () => {
     console.log('[NEW QUOTE] click — currentQuoteId at start:', currentQuoteId);
     if (currentQuoteId && !confirm('Start a new quote? Current work will be saved first.')) {
