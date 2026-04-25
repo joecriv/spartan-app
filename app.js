@@ -671,17 +671,6 @@ function drawProfileDiags() {
         // Border
         ctx.strokeStyle = isSel ? '#b09030' : 'rgba(255,255,255,0.15)'; ctx.lineWidth = isSel ? 2.5 : 1;
         ctx.beginPath(); ctx.roundRect(d.x, d.y, dw, dh, 6); ctx.stroke();
-        // Always-visible × delete button (top-right) — see hitDiagDelete()
-        const _xs = DIAG_X_SIZE;
-        const _xc = d.x + dw - _xs/2 - 4;
-        const _yc = d.y + _xs/2 + 4;
-        ctx.fillStyle = isSel ? 'rgba(180,60,60,0.95)' : 'rgba(20,18,15,0.85)';
-        ctx.beginPath(); ctx.arc(_xc, _yc, _xs/2, 0, Math.PI * 2); ctx.fill();
-        ctx.lineWidth = 1.5; ctx.strokeStyle = isSel ? '#ff8888' : 'rgba(255,255,255,0.55)';
-        ctx.stroke();
-        ctx.font = 'bold 14px Raleway,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText('×', _xc, _yc + 1);
         // Resize handle (bottom-right corner) when selected
         if (isSel) {
             const hx = d.x + dw - 10, hy = d.y + dh - 10;
@@ -4792,17 +4781,6 @@ cv.addEventListener('mousedown', e => {
         const dLine = distToSegment(p.x, p.y, rv.x1+onx2*O2, rv.y1+ony2*O2, rv.x2+onx2*O2, rv.y2+ony2*O2);
         if (dLine < 12) { selectedMeasure = m.id; render(); return; }
     }
-    // Profile diagrams — × button check FIRST so clicking it always deletes
-    {
-        const dDel = hitDiagDelete(p.x, p.y);
-        if (dDel) {
-            pushUndo();
-            profileDiags = profileDiags.filter(d => d.id !== dDel.id);
-            if (selectedDiag === dDel.id) selectedDiag = null;
-            persist(); render();
-            return;
-        }
-    }
     // Profile diagrams — selectable/draggable/resizable
     if (hitDiagResize(p.x, p.y)) {
         const d = profileDiags.find(d => d.id === selectedDiag);
@@ -5120,7 +5098,7 @@ document.addEventListener('keydown', e => {
             selectedJoint = null; persist(); render(); return;
         }
         if (document.activeElement === document.body) {
-            if (selectedMeasure !== null || selectedText !== null || selected !== null) {
+            if (selectedMeasure !== null || selectedText !== null || selected !== null || selectedDiag !== null) {
                 e.preventDefault(); deleteSelected(); return;
             }
         }
