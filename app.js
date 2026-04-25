@@ -1435,8 +1435,16 @@ function applyResize(pos) {
     }
     if (x < 0) { w += x; x = 0; } if (y < 0) { h += y; y = 0; }
     if (x+w > CW) w = CW-x; if (y+h > CH) h = CH-y;
-    w = Math.max(INCH,w); h = Math.max(INCH,h);
+    let minW = INCH, minH = INCH;
+    if (s.shapeType === 'bsp') {
+        minW = Math.max(INCH, (s.pW || 0) + INCH);
+        minH = Math.max(INCH, (s.pH || 0) + INCH);
+    }
+    w = Math.max(minW, w); h = Math.max(minH, h);
     Object.assign(s, { x, y, w, h });
+    if (s.shapeType === 'bsp' && s.pX !== undefined) {
+        s.pX = Math.max(0, Math.min(s.pX, s.w - s.pW));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2442,6 +2450,12 @@ function drawBSP(s, sel) {
         ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
         for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
         ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+        const hw = Math.floor(HND/2);
+        for (const h of handles(s)) {
+            ctx.fillStyle = '#fff'; ctx.strokeStyle = '#b09030'; ctx.lineWidth = 1.5;
+            ctx.fillRect(h.px-hw, h.py-hw, HND, HND);
+            ctx.strokeRect(h.px-hw, h.py-hw, HND, HND);
+        }
     }
 }
 
