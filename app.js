@@ -6779,6 +6779,7 @@ function regRenderList() {
                <select onchange="regSetStatus('${q.id}', this.value)" style="font-size:9px;padding:1px 4px;background:#252525;border:1px solid #333;color:#888;border-radius:3px;font-family:'Raleway',sans-serif">
                    ${['draft','sent','approved','completed','cancelled'].map(s => `<option value="${s}" ${q.status===s?'selected':''}>${s}</option>`).join('')}
                </select>
+               <button onclick="regOpenHistory('${q.id}')" title="View &amp; restore previous versions" style="background:#252525;border:1px solid #333;color:#888;font-size:9px;padding:2px 6px;border-radius:3px;cursor:pointer">History</button>
                <button class="reg-del" onclick="regDeleteQuote('${q.id}')" title="Move to trash">✕</button>`;
         return `<div class="reg-card ${isActive ? 'reg-active' : ''}" data-qid="${q.id}" style="${inTrash?'opacity:0.7':''}">
             <div class="reg-card-top">
@@ -6819,6 +6820,127 @@ async function regDeleteQuote(quoteId) {
     if (rec) rec.deleted_at = new Date().toISOString();
     regRenderList();
     regUpdateCurrentBanner();
+}
+
+// ── Version history (auto-recovery) ─────────────────────────────
+// Backed by quotes_history table + BEFORE UPDATE trigger from
+// supabase_migration_quotes_history.sql. Every save snapshots the OLD
+// row, so an accidental overwrite is recoverable as long as the
+// migration has been applied to Supabase.
+let regHistoryQuoteId = null;
+let regHistoryRows = [];
+
+async function regOpenHistory(quoteId) {
+    if (!currentShopId) return;
+    regHistoryQuoteId = quoteId;
+    const { data, error } = await _sb.from('quotes_history')
+        .select('history_id, snapshot_at, order_number, job_name, client_name, address, status, created_by_email, updated_at, deleted_at')
+        .eq('quote_id', quoteId)
+        .order('snapshot_at', { ascending: false })
+        .limit(50);
+    if (error) {
+        console.error('history fetch failed:', error);
+        alert('Failed to load history: ' + (error.message || error) + '\n\nMake sure supabase_migration_quotes_history.sql has been run in the Supabase SQL Editor.');
+        return;
+    }
+    regHistoryRows = data || [];
+    regShowHistoryModal();
+}
+
+function regShowHistoryModal() {
+    let overlay = document.getElementById('reg-history-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'reg-history-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:20000;display:flex;align-items:center;justify-content:center';
+        overlay.innerHTML = `
+            <div style="background:#1a1a1a;border:1px solid #333;border-radius:6px;width:620px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.7);font-family:Raleway,sans-serif">
+                <div style="padding:12px 16px;border-bottom:1px solid #333;display:flex;align-items:center;justify-content:space-between">
+                    <h3 style="margin:0;color:#e0ddd5;font-size:13px;font-weight:600">Version History</h3>
+                    <button id="reg-history-close" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;padding:0 4px">&times;</button>
+                </div>
+                <div id="reg-history-info" style="padding:8px 16px;color:#888;font-size:10px;border-bottom:1px solid #2a2a2a"></div>
+                <div id="reg-history-list" style="flex:1;overflow-y:auto;padding:8px"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', e => { if (e.target === overlay) regCloseHistory(); });
+        document.getElementById('reg-history-close').addEventListener('click', regCloseHistory);
+    }
+    overlay.style.display = 'flex';
+    const info = document.getElementById('reg-history-info');
+    const liveQuote = regQuotes.find(q => q.id === regHistoryQuoteId);
+    info.textContent = liveQuote
+        ? `Snapshots of "${liveQuote.client_name || liveQuote.job_name || liveQuote.order_number || regHistoryQuoteId.slice(0,8)}" — every save snapshots the previous version.`
+        : 'Snapshots before each save.';
+    regRenderHistoryList();
+}
+
+function regRenderHistoryList() {
+    const list = document.getElementById('reg-history-list');
+    if (!list) return;
+    if (!regHistoryRows.length) {
+        list.innerHTML = '<div style="color:#666;font-size:11px;text-align:center;padding:24px 0">No history yet — every save will snapshot the previous version.</div>';
+        return;
+    }
+    list.innerHTML = regHistoryRows.map(h => {
+        const when = new Date(h.snapshot_at).toLocaleString();
+        const rep = (h.created_by_email||'').split('@')[0] || '?';
+        return `<div style="padding:8px 10px;border:1px solid #2a2a2a;border-radius:4px;margin-bottom:6px;background:#141414">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <div style="min-width:0;flex:1">
+                    <div style="color:#ccc;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.client_name || '(no client)'} &mdash; ${h.job_name || '(no job)'}</div>
+                    <div style="color:#888;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.order_number || ''} &middot; ${rep} &middot; saved ${when}</div>
+                </div>
+                <button onclick="regRestoreFromHistory('${h.history_id}')" style="background:#2a2a2a;border:1px solid #555;color:#b09030;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:10px;flex-shrink:0;font-family:Raleway,sans-serif">Restore</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function regCloseHistory() {
+    const overlay = document.getElementById('reg-history-overlay');
+    if (overlay) overlay.style.display = 'none';
+    regHistoryQuoteId = null;
+    regHistoryRows = [];
+}
+
+async function regRestoreFromHistory(historyId) {
+    const h = regHistoryRows.find(r => r.history_id === historyId);
+    if (!h) return;
+    const { data: full, error: fetchErr } = await _sb.from('quotes_history')
+        .select('quote_id, order_number, job_name, client_name, address, status, quote_data, form_data, pricing_data')
+        .eq('history_id', historyId)
+        .single();
+    if (fetchErr || !full) {
+        alert('Failed to fetch snapshot: ' + ((fetchErr && fetchErr.message) || 'not found'));
+        return;
+    }
+    const when = new Date(h.snapshot_at).toLocaleString();
+    if (!confirm(`Restore this version?\n\n${full.client_name || '(no client)'} \u2014 ${full.job_name || '(no job)'}\nSaved ${when}\n\nThe current version will itself be snapshotted to history first, so this is reversible.`)) return;
+    const { error: updErr } = await _sb.from('quotes')
+        .update({
+            order_number: full.order_number,
+            job_name:     full.job_name,
+            client_name:  full.client_name,
+            address:      full.address,
+            status:       full.status,
+            quote_data:   full.quote_data,
+            form_data:    full.form_data,
+            pricing_data: full.pricing_data,
+            updated_at:   new Date().toISOString()
+        })
+        .eq('id', full.quote_id);
+    if (updErr) {
+        alert('Restore failed: ' + (updErr.message || updErr));
+        return;
+    }
+    regCloseHistory();
+    await regRefresh();
+    if (currentQuoteId === full.quote_id) {
+        await loadQuoteFromDb(full.quote_id);
+    }
+    alert('Restored. The previous version was saved to history before the restore.');
 }
 
 // Restore a soft-deleted quote back into the active list.
