@@ -320,19 +320,51 @@ const FS_DEPTH_IN = 16;
 function farmSinkRectAbs(s) {
     if (!s.farmSink) return null;
     const fsW = FS_WIDTH_IN * INCH, fsD = FS_DEPTH_IN * INCH;
-    const cxAbs = s.x + s.farmSink.cx;
-    const fsLx = cxAbs - fsW/2;
-    if (s.farmSink.edge === 'seg') {
-        const segYAbs = s.y + s.farmSink.segY;
-        const dir = s.farmSink.dir || 1;
-        const y1 = dir > 0 ? segYAbs : segYAbs - fsD;
-        return { x: fsLx, y: y1, w: fsW, h: fsD, segYAbs, dir, cxAbs };
+    const fs = s.farmSink;
+    if (fs.edge === 'seg') {
+        // L/U shapes — seg may be horizontal OR vertical.
+        // The storage convention: cx = position along segment, segY = perpendicular coord.
+        // Determine segment orientation from the polygon.
+        const poly = s.shapeType === 'l' ? lShapePolygon(s)
+                   : s.shapeType === 'u' ? uShapePolygon(s)
+                   : null;
+        if (!poly) return null;
+        const segIdx = parseInt(String(fs.segKey || 'seg0').replace('seg',''), 10);
+        const cur = poly[segIdx], nxt = poly[(segIdx + 1) % poly.length];
+        const isHoriz = Math.abs(cur[1] - nxt[1]) < 0.5;
+        const dir = fs.dir || 1;
+        if (isHoriz) {
+            const cxAbs = s.x + fs.cx;
+            const segYAbs = s.y + fs.segY;
+            const fsLx = cxAbs - fsW/2;
+            const y1 = dir > 0 ? segYAbs : segYAbs - fsD;
+            return { x: fsLx, y: y1, w: fsW, h: fsD, segYAbs, dir, cxAbs };
+        }
+        // vertical segment: cx is y, segY is x. Notch extends along x by dir.
+        const cyAbs = s.y + fs.cx;
+        const segXAbs = s.x + fs.segY;
+        const fsTop = cyAbs - fsW/2;
+        const x1 = dir > 0 ? segXAbs : segXAbs - fsD;
+        return { x: x1, y: fsTop, w: fsD, h: fsW, segXAbs, dir, cyAbs, vertical: true };
     }
-    // Legacy rect top/bottom
-    const fsY = s.farmSink.edge === 'top' ? s.y : s.y + s.h - fsD;
-    const segYAbs = s.farmSink.edge === 'top' ? s.y : s.y + s.h;
-    const dir = s.farmSink.edge === 'top' ? 1 : -1;
-    return { x: fsLx, y: fsY, w: fsW, h: fsD, segYAbs, dir, cxAbs };
+    // Rect — top / bottom / right / left
+    if (fs.edge === 'top') {
+        const cxAbs = s.x + fs.cx;
+        return { x: cxAbs - fsW/2, y: s.y, w: fsW, h: fsD, segYAbs: s.y, dir: 1, cxAbs };
+    }
+    if (fs.edge === 'bottom') {
+        const cxAbs = s.x + fs.cx;
+        return { x: cxAbs - fsW/2, y: s.y + s.h - fsD, w: fsW, h: fsD, segYAbs: s.y + s.h, dir: -1, cxAbs };
+    }
+    if (fs.edge === 'right') {
+        const cyAbs = s.y + fs.cx;
+        return { x: s.x + s.w - fsD, y: cyAbs - fsW/2, w: fsD, h: fsW, segXAbs: s.x + s.w, dir: -1, cyAbs, vertical: true };
+    }
+    if (fs.edge === 'left') {
+        const cyAbs = s.y + fs.cx;
+        return { x: s.x, y: cyAbs - fsW/2, w: fsD, h: fsW, segXAbs: s.x, dir: 1, cyAbs, vertical: true };
+    }
+    return null;
 }
 
 // Returns the edge key whose line hosts the farmhouse sink — 'top'/'bottom' for
@@ -790,6 +822,75 @@ function lVertexIdxAfterRotationCW(oldNotchCorner, oldIdx, newNotchCorner) {
     const newRole = L_ROLE_ROT_CW[oldRole] || oldRole;
     const newIdx = L_ROLES[newNotchCorner]?.indexOf(newRole);
     return newIdx >= 0 ? newIdx : oldIdx;
+}
+
+// Remaps an object whose keys are <prefix><i> (e.g., lc0..lc5 or seg0..seg5)
+// from the old L-shape vertex/segment numbering to the new one after a 90° CW
+// rotation. Both vertex- and segment-keyed properties use the same mapping
+// because adjacency is preserved by the rotation.
+function lRemapKeyedDataCW(oldData, prefix, oldNotch, newNotch) {
+    if (!oldData) return null;
+    const out = {};
+    for (let i = 0; i < 6; i++) {
+        const v = oldData[prefix + i];
+        if (v != null) {
+            const newIdx = lVertexIdxAfterRotationCW(oldNotch, i, newNotch);
+            out[prefix + newIdx] = v;
+        }
+    }
+    return out;
+}
+
+// ── Farm-sink rotation helpers ────────────────────────────────────
+// Returns the FS center point and inward-normal vector in OLD shape-local
+// pixels. Works for rect (top/bottom/right/left) and L/U (seg).
+function fsCenterAndNormal(s, oldPolygon) {
+    if (!s.farmSink) return null;
+    const fs = s.farmSink;
+    const fsW = FS_WIDTH_IN * INCH, fsD = FS_DEPTH_IN * INCH;
+    if (fs.edge === 'top')    return { center: [fs.cx, 0],       normal: [0,  1] };
+    if (fs.edge === 'bottom') return { center: [fs.cx, s.h],     normal: [0, -1] };
+    if (fs.edge === 'right')  return { center: [s.w,    fs.cx],  normal: [-1, 0] };
+    if (fs.edge === 'left')   return { center: [0,      fs.cx],  normal: [ 1, 0] };
+    if (fs.edge === 'seg' && oldPolygon) {
+        const segIdx = parseInt(String(fs.segKey || 'seg0').replace('seg',''), 10);
+        if (!(segIdx >= 0 && segIdx < oldPolygon.length)) return null;
+        const cur = oldPolygon[segIdx];
+        const nxt = oldPolygon[(segIdx + 1) % oldPolygon.length];
+        const isHoriz = Math.abs(cur[1] - nxt[1]) < 0.5;
+        if (isHoriz) {
+            // cx = x along seg, segY = y of seg. Center is on the segment line.
+            return { center: [fs.cx, fs.segY], normal: [0, fs.dir || 1] };
+        }
+        // Vertical: cx = y along seg, segY = x of seg.
+        return { center: [fs.segY, fs.cx], normal: [fs.dir || 1, 0] };
+    }
+    return null;
+}
+
+// Given a center point + normal in NEW shape-local pixels, builds a farm-sink
+// data object compatible with the rendering. For rect, newKey is the new
+// edge ('top'/'right'/'bottom'/'left'). For L/U, newKey is the segKey
+// ('seg0'..) and newPolygon is the new shape's polygon.
+function fsFromCenterNormal(s, center, normal, newKey, newPolygon) {
+    if (newKey === 'top' || newKey === 'bottom' || newKey === 'right' || newKey === 'left') {
+        const cx = (newKey === 'top' || newKey === 'bottom') ? center[0] : center[1];
+        return { edge: newKey, cx };
+    }
+    // seg
+    if (newPolygon) {
+        const segIdx = parseInt(String(newKey).replace('seg',''), 10);
+        if (segIdx >= 0 && segIdx < newPolygon.length) {
+            const cur = newPolygon[segIdx];
+            const nxt = newPolygon[(segIdx + 1) % newPolygon.length];
+            const isHoriz = Math.abs(cur[1] - nxt[1]) < 0.5;
+            if (isHoriz) {
+                return { edge: 'seg', segKey: newKey, cx: center[0], segY: center[1], dir: normal[1] > 0 ? 1 : -1 };
+            }
+            return { edge: 'seg', segKey: newKey, cx: center[1], segY: center[0], dir: normal[0] > 0 ? 1 : -1 };
+        }
+    }
+    return null;
 }
 function lShapeSides(s) {
     const pts = lShapePolygon(s);
@@ -1745,7 +1846,24 @@ function drawFsOutlineLabel(s) {
     ctx.save();
     ctx.strokeStyle = '#2a8fbe'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    if (fr.dir > 0) {
+    if (fr.vertical) {
+        // Vertical edge: skip the side along the shape edge.
+        // dir > 0 means notch goes +x (left edge sink, cuts right)
+        // dir < 0 means notch goes -x (right edge sink, cuts left)
+        if (fr.dir > 0) {
+            // cuts to the right — outer side is left → skip left side
+            ctx.moveTo(fsLx, fsTopY);
+            ctx.lineTo(fsRx, fsTopY);
+            ctx.lineTo(fsRx, fsBotY);
+            ctx.lineTo(fsLx, fsBotY);
+        } else {
+            // cuts to the left — outer side is right → skip right side
+            ctx.moveTo(fsRx, fsTopY);
+            ctx.lineTo(fsLx, fsTopY);
+            ctx.lineTo(fsLx, fsBotY);
+            ctx.lineTo(fsRx, fsBotY);
+        }
+    } else if (fr.dir > 0) {
         // Cut down from outer edge — skip top side (it's along the shape edge)
         ctx.moveTo(fsLx, fsTopY);
         ctx.lineTo(fsLx, fsBotY);
@@ -2446,16 +2564,16 @@ function drawShape(s, sel) {
         ctx.fill();
     }
 
-    // Carve out farmhouse sink notch (paint over with canvas background)
+    // Carve out farmhouse sink notch (paint over with canvas background).
+    // Works for all four edges (top/bottom/right/left) via farmSinkRectAbs.
     if (s.farmSink) {
-        const fsW = FS_WIDTH_IN * INCH, fsD = FS_DEPTH_IN * INCH;
-        const fsCx = s.x + s.farmSink.cx;
-        const fsX = fsCx - fsW/2;
-        const fsY = s.farmSink.edge === 'top' ? s.y : s.y + s.h - fsD;
-        ctx.save();
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(fsX, fsY, fsW, fsD);
-        ctx.restore();
+        const fr = farmSinkRectAbs(s);
+        if (fr) {
+            ctx.save();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(fr.x, fr.y, fr.w, fr.h);
+            ctx.restore();
+        }
     }
 
     // (Corner-check notches: fill uses the notched polygon above; adjacent
@@ -2494,21 +2612,31 @@ function drawShape(s, sel) {
     ];
     for (const sd of sides) {
         const edgeData = s.edges?.[sd.key];
-        // Skip the cutout span on the FS edge — draw left/right pieces with their own profiles
-        if (s.farmSink && s.farmSink.edge === sd.key && (sd.key === 'top' || sd.key === 'bottom')) {
+        // Skip the cutout span on the FS edge — draw the two halves with their own profiles.
+        if (s.farmSink && s.farmSink.edge === sd.key) {
             const fr = farmSinkRectAbs(s);
-            const fsLx = fr.x, fsRx = fr.x + fr.w;
-            const leftBase = { type: edgeData?.type && edgeData.type !== 'segmented' ? edgeData.type : 'none' };
-            const rightBase = leftBase;
-            const leftData = edgeData?.fsLeft || leftBase;
-            const rightData = edgeData?.fsRight || rightBase;
-            // bottom side runs right→left
+            const baseT = { type: edgeData?.type && edgeData.type !== 'segmented' ? edgeData.type : 'none' };
+            const leftData  = edgeData?.fsLeft  || baseT;
+            const rightData = edgeData?.fsRight || baseT;
             if (sd.key === 'top') {
+                const fsLx = fr.x, fsRx = fr.x + fr.w;
                 drawEdgeDatum(leftData,  sd.key + '_fsL', sd.x1, sd.y1, fsLx, sd.y1, sel);
                 drawEdgeDatum(rightData, sd.key + '_fsR', fsRx, sd.y2, sd.x2, sd.y2, sel);
-            } else {
+            } else if (sd.key === 'bottom') {
+                const fsLx = fr.x, fsRx = fr.x + fr.w;
                 drawEdgeDatum(rightData, sd.key + '_fsR', sd.x1, sd.y1, fsRx, sd.y1, sel);
                 drawEdgeDatum(leftData,  sd.key + '_fsL', fsLx, sd.y2, sd.x2, sd.y2, sel);
+            } else if (sd.key === 'right') {
+                // right edge runs top → bottom (sd.y1 < sd.y2). FS cutout
+                // covers vertical span [fr.y, fr.y + fr.h].
+                const fsT = fr.y, fsB = fr.y + fr.h;
+                drawEdgeDatum(leftData,  sd.key + '_fsL', sd.x1, sd.y1, sd.x1, fsT, sel);
+                drawEdgeDatum(rightData, sd.key + '_fsR', sd.x2, fsB,   sd.x2, sd.y2, sel);
+            } else if (sd.key === 'left') {
+                // left edge runs bottom → top in the sides array (sd.y1 > sd.y2).
+                const fsT = fr.y, fsB = fr.y + fr.h;
+                drawEdgeDatum(rightData, sd.key + '_fsR', sd.x1, sd.y1, sd.x1, fsB, sel);
+                drawEdgeDatum(leftData,  sd.key + '_fsL', sd.x2, fsT,   sd.x2, sd.y2, sel);
             }
             continue;
         }
@@ -4879,7 +5007,13 @@ document.addEventListener('keydown', e => {
                 const oldNotch = s.notchCorner || 'ne';
                 const cycle = { ne:'se', se:'sw', sw:'nw', nw:'ne' };
                 const newNotch = cycle[oldNotch] || 'se';
-                // Remap check vertex indices for the new polygon layout
+                const oldH_local = s.h;
+                // Capture old polygon + FS center/normal BEFORE we mutate the shape.
+                const oldPoly = lShapePolygon(s);
+                const fsCN = s.farmSink ? fsCenterAndNormal(s, oldPoly.map(p => [p[0]-s.x, p[1]-s.y])) : null;
+                const oldFsSegIdx = (s.farmSink && s.farmSink.edge === 'seg')
+                    ? parseInt(String(s.farmSink.segKey).replace('seg',''), 10) : -1;
+                // Remap vertex- and segment-keyed properties to new polygon ordering.
                 if (s.checks && s.checks.length) {
                     for (const c of s.checks) {
                         if (c.vertexIdx != null) {
@@ -4887,16 +5021,42 @@ document.addEventListener('keydown', e => {
                         }
                     }
                 }
+                if (s.corners)      s.corners      = lRemapKeyedDataCW(s.corners,      'lc',  oldNotch, newNotch);
+                if (s.chamfers)     s.chamfers     = lRemapKeyedDataCW(s.chamfers,     'lc',  oldNotch, newNotch);
+                if (s.chamfersB)    s.chamfersB    = lRemapKeyedDataCW(s.chamfersB,    'lc',  oldNotch, newNotch);
+                if (s.cornerEdges)  s.cornerEdges  = lRemapKeyedDataCW(s.cornerEdges,  'lc',  oldNotch, newNotch);
+                if (s.chamferEdges) s.chamferEdges = lRemapKeyedDataCW(s.chamferEdges, 'lc',  oldNotch, newNotch);
+                if (s.edges)        s.edges        = lRemapKeyedDataCW(s.edges,        'seg', oldNotch, newNotch);
                 s.notchCorner = newNotch;
                 const oldW = s.w, oldH = s.h, oldNW = s.notchW, oldNH = s.notchH;
                 s.w = oldH; s.h = oldW; s.notchW = oldNH; s.notchH = oldNW;
+                // Rotate farm sink data
+                if (fsCN) {
+                    const newCenter = [oldH_local - fsCN.center[1], fsCN.center[0]];
+                    const newNormal = [-fsCN.normal[1], fsCN.normal[0]];
+                    const newSegIdx = lVertexIdxAfterRotationCW(oldNotch, oldFsSegIdx, newNotch);
+                    const newPoly = lShapePolygon(s).map(p => [p[0]-s.x, p[1]-s.y]);
+                    const newFs = fsFromCenterNormal(s, newCenter, newNormal, 'seg' + newSegIdx, newPoly);
+                    if (newFs) s.farmSink = newFs;
+                }
             } else if (s.shapeType === 'u') {
                 // U polygon vertex indices are stable across uOpening rotations,
                 // so s.checks[].vertexIdx stays unchanged.
+                const oldH_local = s.h;
+                const oldPoly = uShapePolygon(s).map(p => [p[0]-s.x, p[1]-s.y]);
+                const fsCN = s.farmSink ? fsCenterAndNormal(s, oldPoly) : null;
+                const oldFsSegKey = (s.farmSink && s.farmSink.edge === 'seg') ? s.farmSink.segKey : null;
                 const cycle = { top:'right', right:'bottom', bottom:'left', left:'top' };
                 s.uOpening = cycle[s.uOpening || 'top'] || 'right';
                 const oldW = s.w, oldH = s.h, oldLW = s.leftW, oldRW = s.rightW, oldCH = s.channelH;
                 s.w = oldH; s.h = oldW; s.leftW = oldLW; s.rightW = oldRW; s.channelH = oldCH;
+                if (fsCN) {
+                    const newCenter = [oldH_local - fsCN.center[1], fsCN.center[0]];
+                    const newNormal = [-fsCN.normal[1], fsCN.normal[0]];
+                    const newPoly = uShapePolygon(s).map(p => [p[0]-s.x, p[1]-s.y]);
+                    const newFs = fsFromCenterNormal(s, newCenter, newNormal, oldFsSegKey, newPoly);
+                    if (newFs) s.farmSink = newFs;
+                }
             } else if (s.shapeType === 'circle') {
                 // No change — circles are symmetric
             } else {
@@ -4904,10 +5064,8 @@ document.addEventListener('keydown', e => {
                 // every corner / edge property CW so the visual features
                 // stick to the piece.
                 const isRect = (s.shapeType || 'rect') === 'rect';
-                if (isRect && s.farmSink) {
-                    alert('Remove the farm sink before rotating this piece.\n\nRotating a rectangle that has a farm sink is not yet supported because the sink is anchored to the top/bottom edge.');
-                    return;
-                }
+                const oldH_local = s.h;
+                const fsCN = (isRect && s.farmSink) ? fsCenterAndNormal(s, null) : null;
                 // Rect corner checks: cycle cornerKey CW and swap w↔d.
                 if (s.checks && s.checks.length && isRect) {
                     const cyc = { nw:'ne', ne:'se', se:'sw', sw:'nw' };
@@ -4978,6 +5136,15 @@ document.addEventListener('keydown', e => {
                     }
                 }
                 const oldW = s.w; s.w = s.h; s.h = oldW;
+                // Rotate farm sink: rect 'top'→'right'→'bottom'→'left'.
+                if (isRect && fsCN) {
+                    const newCenter = [oldH_local - fsCN.center[1], fsCN.center[0]];
+                    const newNormal = [-fsCN.normal[1], fsCN.normal[0]];
+                    const cycEdge = { top:'right', right:'bottom', bottom:'left', left:'top' };
+                    const newEdge = cycEdge[s.farmSink.edge] || 'top';
+                    const newFs = fsFromCenterNormal(s, newCenter, newNormal, newEdge, null);
+                    if (newFs) s.farmSink = newFs;
+                }
             }
             // Keep shape within canvas
             s.x = clamp(s.x, 0, CW - s.w); s.y = clamp(s.y, 0, CH - s.h);
@@ -7602,25 +7769,46 @@ function injectFsNotchInchesLocal(poly, s) {
     const cxIn  = s.farmSink.cx / INCH;
     const segYIn = s.farmSink.segY / INCH;
     const dir = s.farmSink.dir || 1;
-    const fsLx = cxIn - FS_WIDTH_IN/2, fsRx = cxIn + FS_WIDTH_IN/2;
-    const notchYIn = segYIn + FS_DEPTH_IN * dir;
+    const cur = poly[segIdx];
+    const nxt = poly[(segIdx + 1) % poly.length];
+    const isHoriz = Math.abs(cur[1] - nxt[1]) < 0.005;
+    const isVert  = Math.abs(cur[0] - nxt[0]) < 0.005;
     const out = [];
     for (let i = 0; i < poly.length; i++) {
         out.push(poly[i]);
         if (i === segIdx) {
-            const nxt = poly[(i+1) % poly.length];
-            const cur = poly[i];
-            const goingRight = nxt[0] > cur[0];
-            if (goingRight) {
-                out.push([fsLx, segYIn]);
-                out.push([fsLx, notchYIn]);
-                out.push([fsRx, notchYIn]);
-                out.push([fsRx, segYIn]);
-            } else {
-                out.push([fsRx, segYIn]);
-                out.push([fsRx, notchYIn]);
-                out.push([fsLx, notchYIn]);
-                out.push([fsLx, segYIn]);
+            if (isHoriz) {
+                // cxIn = x along segment, segYIn = y of segment.
+                const fsLx = cxIn - FS_WIDTH_IN/2, fsRx = cxIn + FS_WIDTH_IN/2;
+                const notchYIn = segYIn + FS_DEPTH_IN * dir;
+                const goingRight = nxt[0] > cur[0];
+                if (goingRight) {
+                    out.push([fsLx, segYIn]);
+                    out.push([fsLx, notchYIn]);
+                    out.push([fsRx, notchYIn]);
+                    out.push([fsRx, segYIn]);
+                } else {
+                    out.push([fsRx, segYIn]);
+                    out.push([fsRx, notchYIn]);
+                    out.push([fsLx, notchYIn]);
+                    out.push([fsLx, segYIn]);
+                }
+            } else if (isVert) {
+                // cxIn = y along segment, segYIn = x of segment.
+                const fsT = cxIn - FS_WIDTH_IN/2, fsB = cxIn + FS_WIDTH_IN/2;
+                const notchXIn = segYIn + FS_DEPTH_IN * dir;
+                const goingDown = nxt[1] > cur[1];
+                if (goingDown) {
+                    out.push([segYIn, fsT]);
+                    out.push([notchXIn, fsT]);
+                    out.push([notchXIn, fsB]);
+                    out.push([segYIn, fsB]);
+                } else {
+                    out.push([segYIn, fsB]);
+                    out.push([notchXIn, fsB]);
+                    out.push([notchXIn, fsT]);
+                    out.push([segYIn, fsT]);
+                }
             }
         }
     }
@@ -7773,23 +7961,23 @@ function shapeLocalPolyInches(s) {
         return out;
     }
 
-    // FS notch geometry (in inches, local)
+    // FS notch geometry (in inches, local). FS_WIDTH/FS_DEPTH conventions:
+    //   horizontal edges (top/bottom): cx is x along edge, notch is W wide × D deep.
+    //   vertical edges (right/left):   cx is y along edge, notch is W tall × D deep.
+    const fsEdge = hasFS ? s.farmSink.edge : null;
     const fsCxIn = hasFS ? toIn(s.farmSink.cx) : 0;
-    const fsLx = fsCxIn - FS_WIDTH_IN/2, fsRx = fsCxIn + FS_WIDTH_IN/2;
-    const fsTopEdge = hasFS && s.farmSink.edge === 'top';
-    const fsBotEdge = hasFS && s.farmSink.edge === 'bottom';
+    const fsT = fsCxIn - FS_WIDTH_IN/2, fsB = fsCxIn + FS_WIDTH_IN/2;
 
     // NW corner
     if (ch.nw > 0) { pts.push([0, toIn(chB.nw)]); pts.push([toIn(ch.nw), 0]); }
     else if (r.nw > 0) { const ri=toIn(r.nw); pts.push(...arcPts(ri, ri, ri, Math.PI, Math.PI*1.5)); }
     else pts.push([0, 0]);
 
-    // Top edge — inject FS notch if on top
-    if (fsTopEdge) {
-        pts.push([fsLx, 0]);
-        pts.push([fsLx, FS_DEPTH_IN]);
-        pts.push([fsRx, FS_DEPTH_IN]);
-        pts.push([fsRx, 0]);
+    if (fsEdge === 'top') {
+        pts.push([fsT, 0]);
+        pts.push([fsT, FS_DEPTH_IN]);
+        pts.push([fsB, FS_DEPTH_IN]);
+        pts.push([fsB, 0]);
     }
 
     // NE corner
@@ -7797,23 +7985,36 @@ function shapeLocalPolyInches(s) {
     else if (r.ne > 0) { const ri=toIn(r.ne); pts.push(...arcPts(wi-ri, ri, ri, Math.PI*1.5, Math.PI*2)); }
     else pts.push([wi, 0]);
 
+    if (fsEdge === 'right') {
+        pts.push([wi, fsT]);
+        pts.push([wi - FS_DEPTH_IN, fsT]);
+        pts.push([wi - FS_DEPTH_IN, fsB]);
+        pts.push([wi, fsB]);
+    }
+
     // SE corner
     if (ch.se > 0) { pts.push([wi, hi - toIn(ch.se)]); pts.push([wi - toIn(chB.se), hi]); }
     else if (r.se > 0) { const ri=toIn(r.se); pts.push(...arcPts(wi-ri, hi-ri, ri, 0, Math.PI*0.5)); }
     else pts.push([wi, hi]);
 
-    // Bottom edge — inject FS notch if on bottom (going right→left)
-    if (fsBotEdge) {
-        pts.push([fsRx, hi]);
-        pts.push([fsRx, hi - FS_DEPTH_IN]);
-        pts.push([fsLx, hi - FS_DEPTH_IN]);
-        pts.push([fsLx, hi]);
+    if (fsEdge === 'bottom') {
+        pts.push([fsB, hi]);
+        pts.push([fsB, hi - FS_DEPTH_IN]);
+        pts.push([fsT, hi - FS_DEPTH_IN]);
+        pts.push([fsT, hi]);
     }
 
     // SW corner
     if (ch.sw > 0) { pts.push([toIn(ch.sw), hi]); pts.push([0, hi - toIn(chB.sw)]); }
     else if (r.sw > 0) { const ri=toIn(r.sw); pts.push(...arcPts(ri, hi-ri, ri, Math.PI*0.5, Math.PI)); }
     else pts.push([0, hi]);
+
+    if (fsEdge === 'left') {
+        pts.push([0, fsB]);
+        pts.push([FS_DEPTH_IN, fsB]);
+        pts.push([FS_DEPTH_IN, fsT]);
+        pts.push([0, fsT]);
+    }
 
     return pts;
 }
@@ -7963,17 +8164,26 @@ function subtractRect(A, B) {
 // isn't one. Works for both rect (edge: 'top'|'bottom') and L/U (edge:'seg').
 function fsRectLocalInches(s) {
     if (!s.farmSink) return null;
-    if (s.farmSink.edge === 'top' || s.farmSink.edge === 'bottom') {
-        const cxIn = s.farmSink.cx / INCH;
-        const yIn  = s.farmSink.edge === 'top' ? 0 : (s.h / INCH - FS_DEPTH_IN);
-        return { x: cxIn - FS_WIDTH_IN / 2, y: yIn, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
+    const fs = s.farmSink;
+    if (fs.edge === 'top') {
+        return { x: fs.cx/INCH - FS_WIDTH_IN/2, y: 0, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
     }
-    if (s.farmSink.edge === 'seg') {
-        const cxIn = s.farmSink.cx / INCH;
-        const segYIn = s.farmSink.segY / INCH;
-        const dir = s.farmSink.dir || 1;
-        const yTop = dir > 0 ? segYIn : segYIn - FS_DEPTH_IN;
-        return { x: cxIn - FS_WIDTH_IN / 2, y: yTop, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
+    if (fs.edge === 'bottom') {
+        return { x: fs.cx/INCH - FS_WIDTH_IN/2, y: s.h/INCH - FS_DEPTH_IN, w: FS_WIDTH_IN, h: FS_DEPTH_IN };
+    }
+    if (fs.edge === 'right') {
+        return { x: s.w/INCH - FS_DEPTH_IN, y: fs.cx/INCH - FS_WIDTH_IN/2, w: FS_DEPTH_IN, h: FS_WIDTH_IN };
+    }
+    if (fs.edge === 'left') {
+        return { x: 0, y: fs.cx/INCH - FS_WIDTH_IN/2, w: FS_DEPTH_IN, h: FS_WIDTH_IN };
+    }
+    if (fs.edge === 'seg') {
+        // Orientation depends on the polygon segment. Derive via farmSinkRectAbs
+        // and convert to shape-local inches.
+        const fr = farmSinkRectAbs(s);
+        if (!fr) return null;
+        return { x: (fr.x - s.x) / INCH, y: (fr.y - s.y) / INCH,
+                 w: fr.w / INCH, h: fr.h / INCH };
     }
     return null;
 }
