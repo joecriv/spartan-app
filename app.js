@@ -11004,14 +11004,18 @@ function exportPDF() {
         currentPageIdx = pi;
         syncPageIn();
         render();
-        y += 8; sectionHead(`DESSIN / DRAWING — ${page.name.toUpperCase()}`);
+        // Each canvas tab gets its own PDF page so the layout + metrics
+        // never split across pages, and the layout image can be ~30%
+        // bigger than the previous 255pt cap.
+        newPdfPage();
+        sectionHead(`DESSIN / DRAWING — ${page.name.toUpperCase()}`);
         const imgData = cv.toDataURL('image/png');
-        const maxH    = Math.min(255, PH - FOOTER_H - y - 20);
+        const maxH    = 332;   // ≈30% bigger than the old 255pt cap
         const scale   = Math.min(CW / cv.width, maxH / cv.height);
         const imgW    = cv.width * scale, imgH = cv.height * scale;
-        checkY(imgH + 10);
-        doc.addImage(imgData, 'PNG', ML, y, imgW, imgH);
-        y += imgH + 10;
+        // Center the layout image horizontally.
+        doc.addImage(imgData, 'PNG', ML + (CW - imgW) / 2, y, imgW, imgH);
+        y += imgH + 12;
 
         // ── Per-page metrics: sqft + linear footage ──────────
         const pageSqft    = calcPageSqft(page);
