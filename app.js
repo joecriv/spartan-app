@@ -9052,7 +9052,7 @@ function slabScale() {
     return Math.min(8, MAX_SLAB_W_PX / (maxW + 4)); // px per inch
 }
 
-function slabRender() {
+function slabRender(bgOverride) {
     persistSlab(); // keep slab layout + images in sync with localStorage on every redraw
     if (!slabCtx) return;
     const layout = slabGetLayout();
@@ -9067,7 +9067,7 @@ function slabRender() {
     slabCanvas.width  = canvasW;
     slabCanvas.height = canvasH;
     slabCtx.clearRect(0, 0, canvasW, canvasH);
-    slabCtx.fillStyle = '#111111';
+    slabCtx.fillStyle = bgOverride || '#111111';
     slabCtx.fillRect(0, 0, canvasW, canvasH);
     layout.forEach(L => slabDrawSlab(slabCtx, L.sd, L.idx, L.ox, L.oy, L.sc));
 
@@ -11155,8 +11155,8 @@ async function exportLayoutPDF() {
     const jsPDFLib = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFLib) { alert('jsPDF library not loaded. Check your internet connection and try again.'); return; }
 
-    // Ensure slab canvas is current
-    slabRender();
+    // Print-friendly capture: re-render with WHITE background.
+    slabRender('#ffffff');
 
     const doc    = new jsPDFLib({ unit:'pt', format:'letter' });
     const PW = 612, PH = 792, ML = 45, MR = 45;
@@ -11170,26 +11170,27 @@ async function exportLayoutPDF() {
     let y = 84;
 
     function addHeader(subtitle) {
-        doc.setFillColor(...BRAND);
-        doc.rect(0, 0, PW, 70, 'F');
-        doc.setFillColor(...ACCENT);
-        doc.rect(0, 68, PW, 2.5, 'F');
-        doc.addImage(LOGO_DATA_URL, 'PNG', ML, 8, 48, 48);
+        // Print-friendly header: white background, dark text. No filled
+        // header bar and no logo so B&W printers don't waste a lot of
+        // toner on a solid black block.
+        doc.setDrawColor(...BRAND);
+        doc.setLineWidth(1.2);
+        doc.line(ML, 60, PW - MR, 60);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(17);
-        doc.setTextColor(255, 255, 255);
-        doc.text('SPARTAN', ML + 58, 30);
+        doc.setFontSize(18);
+        doc.setTextColor(...BRAND);
+        doc.text('SPARTAN', ML, 32);
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(...ACCENT);
-        doc.text(subtitle || 'Layout Overview', ML + 58, 48);
+        doc.setFontSize(10);
+        doc.setTextColor(80, 80, 80);
+        doc.text(subtitle || 'Layout Overview', ML, 50);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(255, 255, 255);
-        doc.text(`Quote #: ${formData.order || '—'}`, PW - MR, 30, { align:'right' });
+        doc.setFontSize(10);
+        doc.setTextColor(...BRAND);
+        doc.text(`Quote #: ${formData.order || '—'}`, PW - MR, 32, { align:'right' });
         doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...ACCENT);
-        doc.text(`Date: ${formData.date || todayStr()}`, PW - MR, 48, { align:'right' });
+        doc.setTextColor(80, 80, 80);
+        doc.text(`Date: ${formData.date || todayStr()}`, PW - MR, 50, { align:'right' });
     }
 
     function addPageFooter() {
@@ -11271,7 +11272,7 @@ async function exportLayoutPDF() {
         off.width  = offW;
         off.height = offH;
         const octx = off.getContext('2d');
-        octx.fillStyle = '#111111';
+        octx.fillStyle = '#ffffff';
         octx.fillRect(0, 0, offW, offH);
         slabDrawSlab(octx, sd, si, padPx, padPx, SC_DETAIL);
 
@@ -11382,6 +11383,8 @@ async function exportLayoutPDF() {
     // ── Save ─────────────────────────────────────────────────
     const fname = `SI-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Layout_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
     doc.save(fname);
+    // Restore the live slab canvas to its dark on-screen background.
+    slabRender();
 }
 
 document.getElementById('slab-export-pdf-btn').addEventListener('click', exportLayoutPDF);
