@@ -7924,6 +7924,14 @@ let slabPlaced = [];       // placed piece instances
 let slabSelected = null;   // id of selected placed piece
 let slabPickingPiece = null; // { pageIdx, shapeIdx } — piece being placed
 let _slabNextId = 1;
+// ── Slab remnant measure tool ─────────────────────────────────
+let slabRemnantMode = false;          // tool active
+let slabRemnantPoints = [];           // in-progress points (slab-local inches)
+let slabRemnantSlabIdx = null;        // slab being measured
+let slabRemnantHover = null;          // {slabIdx,x,y,valid}
+let slabRemnantSelected = null;       // {slabIdx, idx}
+let slabIncludeRemnantsInPdf = true;  // toggle for Layout PDF
+let _slabSkipRemnantsInRender = false; // internal: skip remnants during one render call
 let slabTransparent = false; // transparency toggle
 
 // ── helpers ───────────────────────────────────────────────────────────
@@ -9562,6 +9570,91 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
         ctx.strokeRect(ox + dz, oy + dz, sw - 2*dz, sh - 2*dz);
         ctx.setLineDash([]);
     }
+
+    // ── Saved remnants for this slab ─────────────────────────
+    const _rems = (sd && sd.remnants) || [];
+    if (!_slabSkipRemnantsInRender) {
+        for (let k = 0; k < _rems.length; k++) {
+            const r = _rems[k];
+            const isSel = slabRemnantSelected && slabRemnantSelected.slabIdx === idx && slabRemnantSelected.idx === k;
+            ctx.save();
+            ctx.strokeStyle = isSel ? '#ffd060' : '#e89030';
+            ctx.fillStyle = isSel ? 'rgba(255,208,96,0.10)' : 'rgba(232,144,48,0.08)';
+            ctx.lineWidth = isSel ? 2.5 : 1.8;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            r.poly.forEach((p, i) => {
+                const cx = ox + dz + p.x * sc;
+                const cy = oy + dz + p.y * sc;
+                if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+            });
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Per-edge length labels
+            ctx.font = 'bold 10px Raleway,sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            for (let i = 0; i < r.poly.length; i++) {
+                const a = r.poly[i], b = r.poly[(i+1)%r.poly.length];
+                const len = Math.hypot(b.x-a.x, b.y-a.y);
+                const mxC = ox + dz + (a.x + b.x) / 2 * sc;
+                const myC = oy + dz + (a.y + b.y) / 2 * sc;
+                ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+                const lbl = `${len.toFixed(1)}"`;
+                ctx.strokeText(lbl, mxC, myC);
+                ctx.fillStyle = '#ffd060';
+                ctx.fillText(lbl, mxC, myC);
+            }
+            // Center area label
+            let cxC = 0, cyC = 0;
+            r.poly.forEach(p => { cxC += p.x; cyC += p.y; });
+            cxC /= r.poly.length; cyC /= r.poly.length;
+            const sqft = slabPolyAreaSqft(r.poly);
+            const aLbl = `${sqft.toFixed(2)} sqft`;
+            ctx.font = 'bold 11px Raleway,sans-serif';
+            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.strokeText(aLbl, ox + dz + cxC * sc, oy + dz + cyC * sc);
+            ctx.fillStyle = '#ffe080';
+            ctx.fillText(aLbl, ox + dz + cxC * sc, oy + dz + cyC * sc);
+            ctx.restore();
+        }
+    }
+
+    // ── In-progress preview (live canvas only) ───────────────
+    const isLiveCanvas = (ctx === slabCtx);
+    if (isLiveCanvas && slabRemnantMode && slabRemnantSlabIdx === idx && slabRemnantPoints.length > 0) {
+        ctx.save();
+        ctx.strokeStyle = '#ffe080';
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        slabRemnantPoints.forEach((p, i) => {
+            const cx = ox + dz + p.x * sc;
+            const cy = oy + dz + p.y * sc;
+            if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+        });
+        if (slabRemnantHover && slabRemnantHover.slabIdx === idx) {
+            ctx.lineTo(ox + dz + slabRemnantHover.x * sc, oy + dz + slabRemnantHover.y * sc);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        slabRemnantPoints.forEach(p => {
+            ctx.fillStyle = '#ffe080';
+            ctx.beginPath();
+            ctx.arc(ox + dz + p.x * sc, oy + dz + p.y * sc, 4, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.restore();
+    }
+    if (isLiveCanvas && slabRemnantMode && slabRemnantHover && slabRemnantHover.slabIdx === idx) {
+        ctx.save();
+        ctx.fillStyle = slabRemnantHover.valid ? 'rgba(255,224,128,0.85)' : 'rgba(220,60,60,0.85)';
+        ctx.beginPath();
+        ctx.arc(ox + dz + slabRemnantHover.x * sc, oy + dz + slabRemnantHover.y * sc, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
 }
 
 // ── slab canvas mouse interaction ─────────────────────────────────────
@@ -9610,11 +9703,101 @@ function slabHitPiece(mx, my) {
     return null;
 }
 
+// ── Remnant helpers ──────────────────────────────────────────
+function slabPointOverPiece(slabIdx, x, y) {
+    for (const p of slabPlaced) {
+        if (p.slabIdx !== slabIdx) continue;
+        const { w: pw, h: ph } = slabGetPieceWH(p.ref, p.rotation||0);
+        if (x >= p.x && x <= p.x + pw && y >= p.y && y <= p.y + ph) return true;
+    }
+    return false;
+}
+function slabPolyAreaSqft(pts) {
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) {
+        const j = (i+1) % pts.length;
+        a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+    }
+    return Math.abs(a) / 2 / 144;
+}
+function slabPointInPoly(x, y, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+}
+function slabFindLayoutAt(mx, my) {
+    for (const L of slabGetLayout()) {
+        if (mx >= L.ox && mx <= L.ox + L.sw && my >= L.oy && my <= L.oy + L.sh) return L;
+    }
+    return null;
+}
+function slabSetRemnantMode(on) {
+    slabRemnantMode = !!on;
+    if (!on) { slabRemnantPoints = []; slabRemnantSlabIdx = null; slabRemnantHover = null; }
+    const btn = document.getElementById('slab-remnant-btn');
+    if (btn) {
+        btn.style.background = on ? '#b09030' : '';
+        btn.style.color = on ? '#000' : '';
+        btn.style.fontWeight = on ? 'bold' : '';
+    }
+    if (slabCanvas) slabCanvas.style.cursor = on ? 'crosshair' : '';
+    slabRender();
+}
+
 if (slabCanvas) {
     let slabDragState = null;
 
     slabCanvas.addEventListener('mousedown', e => {
         const { mx, my } = slabCanvasXY(e);
+
+        // Remnant measure mode — click 4 points on empty slab area
+        if (slabRemnantMode) {
+            const L = slabFindLayoutAt(mx, my);
+            if (!L) return;
+            const x = (mx - L.ox - L.dz) / L.sc;
+            const y = (my - L.oy - L.dz) / L.sc;
+            if (slabRemnantPoints.length === 0) {
+                slabRemnantSlabIdx = L.idx;
+            } else if (L.idx !== slabRemnantSlabIdx) {
+                return;
+            }
+            if (slabPointOverPiece(L.idx, x, y)) return; // reject points over pieces
+            slabRemnantPoints.push({ x, y });
+            if (slabRemnantPoints.length === 4) {
+                const sd = slabDefs[slabRemnantSlabIdx];
+                if (!sd.remnants) sd.remnants = [];
+                sd.remnants.push({ poly: slabRemnantPoints.slice() });
+                slabRemnantPoints = [];
+                slabRemnantSlabIdx = null;
+            }
+            slabRender();
+            return;
+        }
+
+        // Click to select an existing remnant
+        {
+            const L = slabFindLayoutAt(mx, my);
+            if (L) {
+                const sd = slabDefs[L.idx];
+                const rems = sd && sd.remnants || [];
+                const x = (mx - L.ox - L.dz) / L.sc;
+                const y = (my - L.oy - L.dz) / L.sc;
+                let hit = -1;
+                for (let k = rems.length - 1; k >= 0; k--) {
+                    if (slabPointInPoly(x, y, rems[k].poly)) { hit = k; break; }
+                }
+                if (hit >= 0) {
+                    slabRemnantSelected = { slabIdx: L.idx, idx: hit };
+                    slabSelected = null;
+                    slabRender();
+                    return;
+                }
+            }
+            slabRemnantSelected = null;
+        }
 
         if (slabPickingPiece) {
             // place piece at click location — no restrictions
@@ -9678,6 +9861,19 @@ if (slabCanvas) {
     });
 
     slabCanvas.addEventListener('mousemove', e => {
+        if (slabRemnantMode) {
+            const { mx, my } = slabCanvasXY(e);
+            const L = slabFindLayoutAt(mx, my);
+            if (L && (slabRemnantPoints.length === 0 || L.idx === slabRemnantSlabIdx)) {
+                const x = (mx - L.ox - L.dz) / L.sc;
+                const y = (my - L.oy - L.dz) / L.sc;
+                slabRemnantHover = { slabIdx: L.idx, x, y, valid: !slabPointOverPiece(L.idx, x, y) };
+            } else {
+                slabRemnantHover = null;
+            }
+            slabRender();
+            return;
+        }
         if (!slabDragState) return;
         const { mx, my } = slabCanvasXY(e);
         const p = slabPlaced.find(pl => pl.id === slabDragState.id);
@@ -9765,13 +9961,40 @@ document.addEventListener('keydown', e => {
         document.querySelectorAll('.slab-piece-btn').forEach(b => b.style.borderColor = '');
         slabRender();
     }
+    if (e.key === 'Escape' && slabRemnantMode) {
+        if (slabRemnantPoints.length > 0) {
+            slabRemnantPoints = [];
+            slabRemnantSlabIdx = null;
+            slabRender();
+        } else {
+            slabSetRemnantMode(false);
+        }
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && slabSelected && !e.target.closest('input,textarea,select')) {
         slabPlaced = slabPlaced.filter(p => p.id !== slabSelected);
         slabSelected = null;
         slabRefreshPieceList();
         slabRender();
     }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && slabRemnantSelected && !e.target.closest('input,textarea,select')) {
+        const sel = slabRemnantSelected;
+        const sd = slabDefs[sel.slabIdx];
+        if (sd && sd.remnants) sd.remnants.splice(sel.idx, 1);
+        slabRemnantSelected = null;
+        slabRender();
+    }
 });
+
+// Wire remnant tool button + PDF toggle
+{
+    const rbtn = document.getElementById('slab-remnant-btn');
+    if (rbtn) rbtn.addEventListener('click', () => slabSetRemnantMode(!slabRemnantMode));
+    const rchk = document.getElementById('slab-remnant-pdf-toggle');
+    if (rchk) {
+        rchk.checked = slabIncludeRemnantsInPdf;
+        rchk.addEventListener('change', () => { slabIncludeRemnantsInPdf = rchk.checked; });
+    }
+}
 
 function calcPageSqft(page) {
     // Gross countertop sqft — matches the pricing tab's billable calculation.
@@ -11293,6 +11516,8 @@ async function exportLayoutPDF() {
     const jsPDFLib = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFLib) { alert('jsPDF library not loaded. Check your internet connection and try again.'); return; }
 
+    // Honour the "Restes dans PDF" toggle: skip remnants in render output if off.
+    _slabSkipRemnantsInRender = !slabIncludeRemnantsInPdf;
     // Print-friendly capture: re-render with WHITE background.
     slabRender('#ffffff');
 
@@ -11521,7 +11746,8 @@ async function exportLayoutPDF() {
     // ── Save ─────────────────────────────────────────────────
     const fname = `SI-${pdfBaseName()}_Layout.pdf`;
     doc.save(fname);
-    // Restore the live slab canvas to its dark on-screen background.
+    // Restore the live slab canvas to its dark on-screen background + remnants.
+    _slabSkipRemnantsInRender = false;
     slabRender();
 }
 
