@@ -3249,6 +3249,7 @@ function render() {
     }
     // Update right-panel live sections
     if (typeof updateLiveLegend === 'function') updateLiveLegend();
+    if (typeof updateLiveCutouts === 'function') updateLiveCutouts();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -6289,6 +6290,40 @@ function getMatPriceSqft(matId) {
     const slabSqft = getMatSlabSqft(matId);
     if (slabSqft <= 0) return 0;
     return getMatCostPerSlab(matId) / slabSqft;
+}
+
+// ── Live cutouts summary (across all pages) ─────────────────
+function updateLiveCutouts() {
+    const el = document.getElementById('live-cutouts');
+    if (!el) return;
+    let overmount = 0, undermount = 0, vasque = 0, cooktops = 0, farmSinks = 0, outlets = 0, boccis = 0;
+    for (const p of pages) {
+        for (const s of p.shapes) {
+            if (s.subtype === 'sink_overmount') overmount++;
+            else if (s.subtype === 'sink_undermount') undermount++;
+            else if (s.subtype === 'sink_vasque') vasque++;
+            else if (s.subtype === 'cooktop') cooktops++;
+            else if (s.subtype === 'outlet') outlets++;
+            else if (s.subtype === 'bocci') boccis++;
+            if (!s.subtype && s.farmSink) farmSinks++;
+        }
+    }
+    const rows = [
+        ['Évier overmount',  overmount],
+        ['Évier undermount', undermount],
+        ['Évier vasque',     vasque],
+        ['Farmhouse sink',   farmSinks],
+        ['Cooktop',          cooktops],
+        ['Outlet',           outlets],
+        ['Bocci outlet',     boccis],
+    ].filter(([_, n]) => n > 0);
+    if (rows.length === 0) {
+        el.innerHTML = '<span class="ll-empty">No cutouts placed yet.</span>';
+        return;
+    }
+    el.innerHTML = rows.map(([k, n]) =>
+        `<div class="ll-row" style="justify-content:space-between"><span class="ll-name">${k}</span><span class="ll-abbr" style="color:#b09030">× ${n}</span></div>`
+    ).join('');
 }
 
 // ── Live legend ──────────────────────────────────────────────
