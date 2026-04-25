@@ -5012,6 +5012,10 @@ document.getElementById('btn-undo').addEventListener('click', undo);
 // ─────────────────────────────────────────────────────────────
 const FORM_KEY    = 'spartan_form';
 const PRICING_KEY = 'spartan_pricing';
+// Shop-global default rates — survive new quote / quote switch.
+// Saved alongside per-quote pricingData; used to seed new quotes
+// instead of falling back to all-zero DEFAULT_RATES.
+const RATES_KEY = 'spartan_rates';
 const MATDB_KEY   = 'spartan_matdb';
 let formData = { order:'', job:'', client:'', address:'', phones:[''], date:'', notes:'', materials:[] };
 let matNextId = 1;
@@ -5827,7 +5831,24 @@ function fmt$(v) {
 
 function savePricing() {
     localStorage.setItem(PRICING_KEY, JSON.stringify(pricingData));
+    // Mirror just the rates to a shop-global key so they seed future new quotes.
+    if (pricingData.rates) localStorage.setItem(RATES_KEY, JSON.stringify(pricingData.rates));
     scheduleSyncToRemote();
+}
+
+// Returns the last-saved shop-global rates, falling back to DEFAULT_RATES.
+function getSavedRates() {
+    try {
+        const r = JSON.parse(localStorage.getItem(RATES_KEY));
+        if (r && typeof r === 'object') {
+            const merged = { ...DEFAULT_RATES };
+            for (const k of Object.keys(DEFAULT_RATES)) {
+                if (r[k] !== undefined) merged[k] = r[k];
+            }
+            return merged;
+        }
+    } catch (_) {}
+    return { ...DEFAULT_RATES };
 }
 
 function loadPricing() {
@@ -5841,6 +5862,10 @@ function loadPricing() {
             }
             if (!pricingData.materialPrices) pricingData.materialPrices = {};
             if (pricingData.polissageSousQty === undefined) pricingData.polissageSousQty = 0;
+        } else {
+            // Cold start with no per-quote pricing yet — seed from the
+            // shop-global rates so the Costs panel isn't all zeros.
+            pricingData.rates = getSavedRates();
         }
     } catch(e) {}
 }
@@ -10099,9 +10124,9 @@ document.getElementById('load-file-input').addEventListener('change', function(e
                     pricingData = pd;
                     if (!pricingData.materialPrices) pricingData.materialPrices = {};
                 } else {
-                    // Old format — keep defaults, don't crash
+                    // Old format — fall back to the saved shop-global rates
                     pricingData = {
-                        rates: { ...DEFAULT_RATES },
+                        rates: getSavedRates(),
                         materialPrices: {},
                     };
                 }
@@ -10154,10 +10179,14 @@ function newQuote() {
     document.getElementById('f-notes').value  = '';
     renderMaterials();
     pricingData = {
-        rates: { ...DEFAULT_RATES },
+        // Carry over the shop-global rates so a new quote starts with the
+        // user's last-edited rates, not zeros.
+        rates: getSavedRates(),
         materialPrices: {},
     };
     pricingNextId = 1;
+    // Note: RATES_KEY is intentionally NOT cleared here — it's the
+    // shop-global default that should survive new quotes.
     ['spartan_v4','spartan_v3','spartan_v2', FORM_KEY, PRICING_KEY].forEach(k => localStorage.removeItem(k));
     // Also clear remote data for this user
     if (currentUserId) {
