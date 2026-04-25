@@ -10798,7 +10798,7 @@ function generateProposal() {
     doc.text('All prices include GST (5%) and QST (9.975%).', ML, y, {maxWidth:CW});
     y += 12;
 
-    const fname = `SI-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Proposal_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
+    const fname = `SI-${pdfBaseName()}_Proposal.pdf`;
     doc.save(fname);
 }
 
@@ -10808,10 +10808,14 @@ document.getElementById('btn-gen-proposal').addEventListener('click', generatePr
 //  Phase 4 — Save / Load / New / Export PDF / Print
 // ─────────────────────────────────────────────────────────────
 
+function pdfBaseName() {
+    const c = (formData.client || '').trim();
+    if (c) return c.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+    const d = (formData.date || '').trim() || new Date().toISOString().slice(0, 10);
+    return `Unnamed-Project-${d.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
 function quoteFilename(ext) {
-    const order = (formData.order || 'XXXX').replace(/[^a-zA-Z0-9_-]/g, '-');
-    const job   = (formData.job   || 'Quote').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return `SI-${order}_${job}.${ext}`;
+    return `SI-${pdfBaseName()}.${ext}`;
 }
 
 // ── Save Quote ────────────────────────────────────────────────
@@ -11484,7 +11488,7 @@ async function exportLayoutPDF() {
     }
 
     // ── Save ─────────────────────────────────────────────────
-    const fname = `SI-${(formData.order||'000').replace(/[^a-zA-Z0-9_-]/g,'-')}_Layout_${(formData.client||'Client').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'')}.pdf`;
+    const fname = `SI-${pdfBaseName()}_Layout.pdf`;
     doc.save(fname);
     // Restore the live slab canvas to its dark on-screen background.
     slabRender();
@@ -12508,7 +12512,7 @@ async function kitExportPDF() {
     const maxH = PH - FOOTER_H - y - 20;
     const sc2 = Math.min(CW / offW, maxH / offH);
     doc.addImage(imgData, 'JPEG', ML + (CW - offW * sc2) / 2, y, offW * sc2, offH * sc2);
-    const fname = `SI-${(formData.order || '000').replace(/[^a-zA-Z0-9_-]/g, '-')}_Kitchen_${(formData.client || 'Client').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '')}.pdf`;
+    const fname = `SI-${pdfBaseName()}_Kitchen.pdf`;
     doc.save(fname);
 }
 
