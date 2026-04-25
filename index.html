@@ -383,6 +383,26 @@
     <div class="pop-btns"><button class="pop-ok" id="check-ok">Add Check</button><button class="pop-cancel" id="check-cancel">Cancel</button></div>
 </div>
 
+<div id="matdb-popup" class="popup-box" style="min-width:340px">
+    <h3>Add Material to Database</h3>
+    <div class="pop-hint" style="margin-bottom:8px">Fill in the material details. You can edit thicknesses and finishes after adding.</div>
+    <div class="pop-row"><label>Color name</label><input id="matdb-pop-name" type="text" placeholder="e.g. Calacatta Gold" style="width:200px;text-align:left"></div>
+    <div class="pop-row"><label>Brand</label><input id="matdb-pop-supplier" type="text" placeholder="e.g. Caesarstone" style="width:200px;text-align:left"></div>
+    <div class="pop-row"><label>Stone Type</label><select id="matdb-pop-type"></select></div>
+    <div class="pop-row"><label>Cost / slab <span>($)</span></label><input id="matdb-pop-cost" type="number" min="0" step="1" placeholder="0"></div>
+    <div class="pop-row"><label>Slab size <span>(W × H in)</span></label>
+        <span style="display:flex;gap:4px;align-items:center">
+            <input id="matdb-pop-slabw" type="number" min="0" step="1" value="129" style="width:60px">
+            <span style="color:#777">×</span>
+            <input id="matdb-pop-slabh" type="number" min="0" step="1" value="63" style="width:60px">
+        </span>
+    </div>
+    <div class="pop-row"><label>Thicknesses</label><input id="matdb-pop-thick" type="text" placeholder="2cm, 3cm" style="width:200px;text-align:left" value="2cm, 3cm"></div>
+    <div class="pop-row"><label>Finishes</label><input id="matdb-pop-finish" type="text" placeholder="Polished, Honed" style="width:200px;text-align:left" value="Polished"></div>
+    <div class="pop-hint" style="font-size:9px;opacity:0.7">Comma-separate multiple thicknesses or finishes.</div>
+    <div class="pop-btns"><button class="pop-ok" id="matdb-pop-ok">Add to Database</button><button class="pop-cancel" id="matdb-pop-cancel">Cancel</button></div>
+</div>
+
 <div id="joint-popup" class="popup-box">
     <h3 id="joint-popup-title">Add Joint Line</h3>
     <div class="pop-hint" id="joint-popup-hint" style="margin-bottom:6px">Place a custom joint line.</div>

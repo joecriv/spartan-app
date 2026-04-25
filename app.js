@@ -3032,7 +3032,7 @@ function drawLegendSwatches() {
 //  Popup helpers
 // ─────────────────────────────────────────────────────────────
 function hideAllPopups() {
-    ['size-popup','lshape-popup','ushape-popup','bsp-popup','circle-popup','sink-popup','radius-popup','edge-popup','joint-popup','check-popup','text-popup'].forEach(id =>
+    ['size-popup','lshape-popup','ushape-popup','bsp-popup','circle-popup','sink-popup','radius-popup','edge-popup','joint-popup','check-popup','matdb-popup','text-popup'].forEach(id =>
         document.getElementById(id).style.display = 'none');
     currentPopup = null; pendingPlace = null; pendingCorner = null;
     pendingEdge = null; pendingJointShape = null; pendingJointPos = null;
@@ -5586,12 +5586,60 @@ function renderMatDb() {
         saveMatDb(); renderMatDb();
     }));
 }
-document.getElementById('matdb-add-btn').addEventListener('click', () => {
-    matDb.push({ id: matDbNextId++, name:'', supplier:'', stoneType:'', thicknesses:['2cm','3cm'], finishes:['Polished'], slabW:129, slabH:63, costPerSlab:0 });
+// ── Add Material popup flow ──────────────────────────────────────
+function openMatdbPopup() {
+    hideAllPopups();
+    currentPopup = 'matdb';
+    // Populate the stone-type dropdown
+    const typeSel = document.getElementById('matdb-pop-type');
+    typeSel.innerHTML = '<option value="">— Type —</option>' +
+        STONE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    // Reset fields
+    document.getElementById('matdb-pop-name').value = '';
+    document.getElementById('matdb-pop-supplier').value = '';
+    typeSel.value = '';
+    document.getElementById('matdb-pop-cost').value = '';
+    document.getElementById('matdb-pop-slabw').value = 129;
+    document.getElementById('matdb-pop-slabh').value = 63;
+    document.getElementById('matdb-pop-thick').value = '2cm, 3cm';
+    document.getElementById('matdb-pop-finish').value = 'Polished';
+    // Show centered
+    const el = document.getElementById('matdb-popup');
+    showPopupAt(el, window.innerWidth/2 - 180, Math.max(40, window.innerHeight/2 - 280));
+    setTimeout(() => document.getElementById('matdb-pop-name').focus(), 50);
+}
+function confirmMatdbPopup() {
+    const name = document.getElementById('matdb-pop-name').value.trim();
+    if (!name) { alert('Color name is required.'); return; }
+    const supplier = document.getElementById('matdb-pop-supplier').value.trim();
+    const stoneType = document.getElementById('matdb-pop-type').value;
+    const costPerSlab = parseFloat(document.getElementById('matdb-pop-cost').value) || 0;
+    const slabW = parseFloat(document.getElementById('matdb-pop-slabw').value) || 129;
+    const slabH = parseFloat(document.getElementById('matdb-pop-slabh').value) || 63;
+    const splitList = v => v.split(',').map(s => s.trim()).filter(Boolean);
+    const thicknesses = splitList(document.getElementById('matdb-pop-thick').value);
+    const finishes    = splitList(document.getElementById('matdb-pop-finish').value);
+    matDb.push({
+        id: matDbNextId++, name, supplier, stoneType,
+        thicknesses: thicknesses.length ? thicknesses : ['2cm','3cm'],
+        finishes:    finishes.length    ? finishes    : ['Polished'],
+        slabW, slabH, costPerSlab
+    });
     saveMatDb();
+    hideAllPopups();
     renderMatDb();
-    const rows = document.querySelectorAll('#matdb-rows .mat-row');
-    if (rows.length) { const inp = rows[rows.length-1].querySelector('input'); if (inp) inp.focus(); }
+    renderMaterials();   // refresh dropdowns in any open material rows
+    renderCostsPanel();  // refresh slab-prices list
+}
+document.getElementById('matdb-add-btn').addEventListener('click', openMatdbPopup);
+document.getElementById('matdb-pop-ok').addEventListener('click', confirmMatdbPopup);
+document.getElementById('matdb-pop-cancel').addEventListener('click', hideAllPopups);
+['matdb-pop-name','matdb-pop-supplier','matdb-pop-cost','matdb-pop-slabw','matdb-pop-slabh','matdb-pop-thick','matdb-pop-finish'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); confirmMatdbPopup(); }
+        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+        e.stopPropagation();
+    });
 });
 function matDbDisplayName(m) { return [m.name, (m.thicknesses||[]).join('/'), (m.finishes||[]).join('/')].filter(Boolean).join(' · ') || 'Unnamed'; }
 function getMatCostPerSlab(matId) {
