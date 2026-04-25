@@ -140,6 +140,12 @@
         <!-- ── Costs panel ── -->
         <div id="costs-panel" style="display:none">
 
+            <div id="costs-lock-banner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:5px;margin-bottom:10px">
+                <span id="costs-lock-msg" style="font-size:11px;flex:1"></span>
+                <button id="costs-pw-change-btn" type="button" style="display:none;font-size:10px;padding:3px 8px;background:#252525;color:#999;border:1px solid #444;border-radius:3px;cursor:pointer;font-family:Raleway,sans-serif">Change password</button>
+                <button id="costs-lock-toggle" type="button" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #b09030;color:#b09030;border-radius:3px;cursor:pointer;font-weight:600;font-family:Raleway,sans-serif">Unlock</button>
+            </div>
+
             <h2>Service Rates</h2>
             <p class="price-internal-note">Adjust rates for fabrication services.</p>
             <div id="cost-service-rates"></div>

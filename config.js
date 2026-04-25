@@ -19,6 +19,11 @@ const BRAND = {
 
     shopId: '890f5923-2da8-4202-af75-a99721ac4df6',
 
+    // Default password to unlock the Costs panel. Owners can override it
+    // in-app (Change password button when unlocked) — that override is
+    // saved per-device in localStorage.
+    costsLockPassword: 'spartan2026',
+
 };
 
 if (typeof window !== 'undefined') { window.BRAND = BRAND; }

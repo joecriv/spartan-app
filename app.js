@@ -5715,6 +5715,88 @@ document.getElementById('matdb-pop-cancel').addEventListener('click', hideAllPop
     });
 });
 function matDbDisplayName(m) { return [m.name, (m.thicknesses||[]).join('/'), (m.finishes||[]).join('/')].filter(Boolean).join(' · ') || 'Unnamed'; }
+
+// ── Costs panel password lock ─────────────────────────────────────
+// The Costs panel (service rates, slab prices, material database) is
+// password-locked to prevent accidental edits by anyone but the owner.
+// Default password lives in BRAND.costsLockPassword; per-device override
+// lives in localStorage (key: <storagePrefix>_costs_pw).
+const COSTS_PW_KEY = (BRAND.storagePrefix || 'shop') + '_costs_pw';
+let costsUnlocked = false;
+
+function getCostsPassword() {
+    return localStorage.getItem(COSTS_PW_KEY) || BRAND.costsLockPassword || '';
+}
+
+function tryUnlockCosts() {
+    const pw = prompt('Enter password to unlock Costs:');
+    if (pw == null) return;
+    if (pw === getCostsPassword()) {
+        costsUnlocked = true;
+        applyCostsLockState();
+    } else {
+        alert('Incorrect password.');
+    }
+}
+
+function lockCostsPanel() {
+    costsUnlocked = false;
+    applyCostsLockState();
+}
+
+function changeCostsPassword() {
+    if (!costsUnlocked) return;
+    const cur = prompt('Confirm CURRENT password:');
+    if (cur == null) return;
+    if (cur !== getCostsPassword()) { alert('Current password is incorrect.'); return; }
+    const next = prompt('Enter NEW password:');
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed) { alert('Password cannot be empty.'); return; }
+    localStorage.setItem(COSTS_PW_KEY, trimmed);
+    alert('Password updated. It is saved on this device only.');
+}
+
+function applyCostsLockState() {
+    const banner = document.getElementById('costs-lock-banner');
+    const msg    = document.getElementById('costs-lock-msg');
+    const btn    = document.getElementById('costs-lock-toggle');
+    const pwBtn  = document.getElementById('costs-pw-change-btn');
+    const panel  = document.getElementById('costs-panel');
+    if (!banner || !msg || !btn || !panel) return;
+    if (costsUnlocked) {
+        banner.style.background  = '#1a2a1a';
+        banner.style.border      = '1px solid #3a5a30';
+        banner.style.color       = '#7ad080';
+        msg.innerHTML            = '🔓 <b>Costs unlocked.</b> Changes you make here apply immediately.';
+        btn.textContent          = 'Lock';
+        btn.style.borderColor    = '#7ad080';
+        btn.style.color          = '#7ad080';
+        if (pwBtn) pwBtn.style.display = 'inline-block';
+    } else {
+        banner.style.background  = '#2a1a1a';
+        banner.style.border      = '1px solid #6a3030';
+        banner.style.color       = '#e0a050';
+        msg.innerHTML            = '🔒 <b>Costs are locked.</b> Enter password to make changes.';
+        btn.textContent          = 'Unlock';
+        btn.style.borderColor    = '#b09030';
+        btn.style.color          = '#b09030';
+        if (pwBtn) pwBtn.style.display = 'none';
+    }
+    // Disable / enable every form element inside the panel except the lock button itself
+    panel.querySelectorAll('input, select, textarea, button').forEach(el => {
+        if (el === btn || el === pwBtn) return;
+        el.disabled = !costsUnlocked;
+    });
+    // Visual hint: dim the locked panel
+    panel.style.opacity = costsUnlocked ? '1' : '0.7';
+}
+
+document.getElementById('costs-lock-toggle').addEventListener('click', () => {
+    if (costsUnlocked) lockCostsPanel();
+    else tryUnlockCosts();
+});
+document.getElementById('costs-pw-change-btn').addEventListener('click', changeCostsPassword);
 function getMatCostPerSlab(matId) {
     const m = formData.materials.find(m => m.id === matId);
     if (!m || !m.dbId) return 0;
@@ -6183,6 +6265,9 @@ function renderCostsPanel() {
 
     // ── Material Database ────────────────────────────────────────
     renderMatDb();
+
+    // Re-apply lock state every render (re-disables newly-created inputs).
+    if (typeof applyCostsLockState === 'function') applyCostsLockState();
 }
 
 function renderPricingPanel() {
@@ -11808,6 +11893,7 @@ function initApp() {
     loadMatDb();   // Load material catalog FIRST so brand/color dropdowns render with options
     loadForm();
     loadPricing();
+    applyCostsLockState();   // start locked
     // Compute _nextPageId from loaded pages
     _nextPageId = Math.max(...pages.map(p => p.id), 1) + 1;
     renderPageTabs();
