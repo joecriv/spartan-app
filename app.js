@@ -10998,18 +10998,32 @@ function exportPDF() {
     const savedHovEdge = hovEdge;
     selected = null; selectedDiag = null; selectedText = null; selectedJoint = null;
     hovCorner = null; hovEdge = null;
+
+    // Pre-scan ALL pages for edge types so we can render the legend on
+    // page 1 alongside Tab 1 (per the desired layout).
+    const usedTypes = new Set();
+    let hasInternalJoint = false;
+    for (const p of pages) {
+        for (const s of p.shapes) {
+            if (s.edges) for (const side of Object.values(s.edges)) { if (side?.type && side.type !== 'none') usedTypes.add(side.type); }
+            if (s.cornerEdges) for (const ce of Object.values(s.cornerEdges)) { if (ce?.type && ce.type !== 'none') usedTypes.add(ce.type); }
+            if (s.chamferEdges) for (const ce of Object.values(s.chamferEdges)) { if (ce?.type && ce.type !== 'none') usedTypes.add(ce.type); }
+            if (s.joints?.length) hasInternalJoint = true;
+        }
+    }
+
     for (let pi = 0; pi < pages.length; pi++) {
         const page = pages[pi];
         currentPageIdx = pi;
         syncPageIn();
         render();
-        // Each canvas tab gets its own PDF page so the layout + metrics
-        // never split across pages, and the layout image can be ~30%
-        // bigger than the previous 255pt cap.
-        newPdfPage();
+        // Tab 1 stays on PDF page 1 alongside Job Details + Materials and
+        // (below) the Edge Profile Legend. Tabs 2+ each get their own PDF
+        // page with a bigger layout image.
+        if (pi > 0) newPdfPage();
         sectionHead(`DESSIN / DRAWING — ${page.name.toUpperCase()}`);
         const imgData = cv.toDataURL('image/png');
-        const maxH    = 332;   // ≈30% bigger than the old 255pt cap
+        const maxH    = pi === 0 ? 270 : 332; // tab 1 a bit smaller to share page 1
         const scale   = Math.min(CW / cv.width, maxH / cv.height);
         const imgW    = cv.width * scale, imgH = cv.height * scale;
         // Center the layout image horizontally.
@@ -11079,6 +11093,32 @@ function exportPDF() {
         }
 
         y += metricsH + 10;
+
+        // Render the Edge Profile Legend right after Tab 1's metrics so it
+        // sits on PDF page 1 with Job Details / Materials / Tab 1 drawing.
+        if (pi === 0 && (usedTypes.size || hasInternalJoint)) {
+            y += 4; sectionHead('EDGE PROFILE LEGEND');
+            const typeOrder = ['pencil','ogee','bullnose','halfbull','bevel','mitered','special','joint','waterfall'];
+            for (const type of typeOrder) {
+                if (!usedTypes.has(type)) continue;
+                const def = EDGE_DEFS[type];
+                const [r, g, b] = hexToRgb(def.color);
+                checkY(12);
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(r, g, b);
+                doc.text(def.abbr, ML + 3, y);
+                doc.setFont('helvetica', 'normal'); doc.setTextColor(...BODY_T);
+                doc.text(def.label, ML + 30, y);
+                y += 12;
+            }
+            if (hasInternalJoint) {
+                checkY(12);
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(224, 69, 123);
+                doc.text('JT', ML + 3, y);
+                doc.setFont('helvetica', 'normal'); doc.setTextColor(...BODY_T);
+                doc.text('Interior Joint Line', ML + 30, y);
+                y += 12;
+            }
+        }
     }
     // Restore original page + selection state
     currentPageIdx = savedIdx;
@@ -11086,43 +11126,6 @@ function exportPDF() {
     selectedJoint = savedSelJoint; hovCorner = savedHovCorner; hovEdge = savedHovEdge;
     syncPageIn();
     render();
-
-    // ── Collect edge types & pieces from ALL pages ────────────
-    const usedTypes = new Set();
-    let hasInternalJoint = false;
-    for (const p of pages) {
-        for (const s of p.shapes) {
-            if (s.edges) for (const side of Object.values(s.edges)) { if (side?.type && side.type !== 'none') usedTypes.add(side.type); }
-            if (s.cornerEdges) for (const ce of Object.values(s.cornerEdges)) { if (ce?.type && ce.type !== 'none') usedTypes.add(ce.type); }
-            if (s.chamferEdges) for (const ce of Object.values(s.chamferEdges)) { if (ce?.type && ce.type !== 'none') usedTypes.add(ce.type); }
-            if (s.joints?.length) hasInternalJoint = true;
-        }
-    }
-
-    // ── Edge Profile Legend ──────────────────────────────────
-    if (usedTypes.size || hasInternalJoint) {
-        y += 4; sectionHead('EDGE PROFILE LEGEND');
-        const typeOrder = ['pencil','ogee','bullnose','halfbull','bevel','mitered','special','joint','waterfall'];
-        for (const type of typeOrder) {
-            if (!usedTypes.has(type)) continue;
-            const def = EDGE_DEFS[type];
-            const [r, g, b] = hexToRgb(def.color);
-            checkY(12);
-            doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(r, g, b);
-            doc.text(def.abbr, ML + 3, y);
-            doc.setFont('helvetica', 'normal'); doc.setTextColor(...BODY_T);
-            doc.text(def.label, ML + 30, y);
-            y += 12;
-        }
-        if (hasInternalJoint) {
-            checkY(12);
-            doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(224, 69, 123);
-            doc.text('JT', ML + 3, y);
-            doc.setFont('helvetica', 'normal'); doc.setTextColor(...BODY_T);
-            doc.text('Interior Joint Line', ML + 30, y);
-            y += 12;
-        }
-    }
 
     // ── Notes ────────────────────────────────────────────────
     if (formData.notes && formData.notes.trim()) {
