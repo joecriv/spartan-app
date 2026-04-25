@@ -11195,6 +11195,37 @@ function exportPDF() {
 
         y += metricsH + 10;
 
+        // ── Cutouts: sinks, farmsink, cooktop, outlets, boccis ─────
+        const cutCounts = calcPageSinkCounts(page);
+        const cutRows = [];
+        if (cutCounts.overmount  > 0) cutRows.push(['Évier overmount',  cutCounts.overmount]);
+        if (cutCounts.undermount > 0) cutRows.push(['Évier undermount', cutCounts.undermount]);
+        if (cutCounts.vasque     > 0) cutRows.push(['Évier vasque',     cutCounts.vasque]);
+        if (cutCounts.farmSinks  > 0) cutRows.push(['Farmhouse sink',   cutCounts.farmSinks]);
+        if (cutCounts.cooktops   > 0) cutRows.push(['Cooktop',          cutCounts.cooktops]);
+        if (cutCounts.outlets    > 0) cutRows.push(['Outlet',           cutCounts.outlets]);
+        if (cutCounts.boccis     > 0) cutRows.push(['Bocci outlet',     cutCounts.boccis]);
+        if (cutRows.length > 0) {
+            const cutH = 16 + cutRows.length * 11 + 6;
+            checkY(cutH);
+            doc.setFillColor(...TBL_BG);
+            doc.rect(ML, y, CW, cutH, 'F');
+            doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
+            doc.rect(ML, y, CW, cutH, 'S');
+            let cy = y + 11;
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...BRAND);
+            doc.text('DÉCOUPES / CUTOUTS', ML + 6, cy);
+            cy += 9;
+            for (const [k, n] of cutRows) {
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...BODY_T);
+                doc.text(k, ML + 12, cy);
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+                doc.text(`× ${n}`, PW - MR - 6, cy, { align:'right' });
+                cy += 11;
+            }
+            y += cutH + 8;
+        }
+
         // Render the Edge Profile Legend right after Tab 1's metrics so it
         // sits on PDF page 1 with Job Details / Materials / Tab 1 drawing.
         if (pi === 0 && (usedTypes.size || hasInternalJoint)) {
