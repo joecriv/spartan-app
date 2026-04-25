@@ -11023,7 +11023,7 @@ function exportPDF() {
         if (pi > 0) newPdfPage();
         sectionHead(`DESSIN / DRAWING — ${page.name.toUpperCase()}`);
         const imgData = cv.toDataURL('image/png');
-        const maxH    = pi === 0 ? 270 : 332; // tab 1 a bit smaller to share page 1
+        const maxH    = pi === 0 ? 405 : 498; // tab 1 a bit smaller to share page 1
         const scale   = Math.min(CW / cv.width, maxH / cv.height);
         const imgW    = cv.width * scale, imgH = cv.height * scale;
         // Center the layout image horizontally.
