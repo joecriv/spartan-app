@@ -1999,23 +1999,32 @@ function drawPolyEdgeMaybeFS(s, sd, segKey, sel) {
     const edgeData = s.edges?.[segKey];
     if (s.farmSink && farmSinkEdgeKey(s) === segKey) {
         const fr = farmSinkRectAbs(s);
+        const baseT = edgeData?.type && edgeData.type !== 'segmented' ? edgeData.type : 'none';
+        const leftData = edgeData?.fsLeft || { type: baseT };
+        const rightData = edgeData?.fsRight || { type: baseT };
+        const isVertSeg = Math.abs(sd.x1 - sd.x2) < 0.5;
+        if (isVertSeg) {
+            // Vertical edge: split at fsTopY/fsBotY along Y. fsLeft = top (smaller Y).
+            const fsTopY = fr.y, fsBotY = fr.y + fr.h;
+            const goingDown = sd.y2 >= sd.y1;
+            if (goingDown) {
+                drawEdgeDatum(leftData,  segKey + '_fsL', sd.x1, sd.y1, sd.x1, fsTopY, sel);
+                drawEdgeDatum(rightData, segKey + '_fsR', sd.x2, fsBotY, sd.x2, sd.y2, sel);
+            } else {
+                drawEdgeDatum(rightData, segKey + '_fsR', sd.x1, sd.y1, sd.x1, fsBotY, sel);
+                drawEdgeDatum(leftData,  segKey + '_fsL', sd.x2, fsTopY, sd.x2, sd.y2, sel);
+            }
+            return;
+        }
+        // Horizontal edge: split at fsLx/fsRx. fsLeft = west (smaller X).
         const fsLx = fr.x, fsRx = fr.x + fr.w;
-        // fsLeft = piece with smaller x; fsRight = piece with larger x
-        const leftBase = { type: edgeData?.type && edgeData.type !== 'segmented' ? edgeData.type : 'none' };
-        const rightBase = { type: edgeData?.type && edgeData.type !== 'segmented' ? edgeData.type : 'none' };
-        const leftData = edgeData?.fsLeft || leftBase;
-        const rightData = edgeData?.fsRight || rightBase;
         const goingRight = sd.x2 >= sd.x1;
         if (goingRight) {
-            // sd.x1 (west) → fsLx : fsLeft
-            drawEdgeDatum(leftData, segKey + '_fsL', sd.x1, sd.y1, fsLx, sd.y1, sel);
-            // fsRx → sd.x2 (east) : fsRight
+            drawEdgeDatum(leftData,  segKey + '_fsL', sd.x1, sd.y1, fsLx, sd.y1, sel);
             drawEdgeDatum(rightData, segKey + '_fsR', fsRx, sd.y2, sd.x2, sd.y2, sel);
         } else {
-            // sd.x1 (east) → fsRx : fsRight
             drawEdgeDatum(rightData, segKey + '_fsR', sd.x1, sd.y1, fsRx, sd.y1, sel);
-            // fsLx → sd.x2 (west) : fsLeft
-            drawEdgeDatum(leftData, segKey + '_fsL', fsLx, sd.y2, sd.x2, sd.y2, sel);
+            drawEdgeDatum(leftData,  segKey + '_fsL', fsLx, sd.y2, sd.x2, sd.y2, sel);
         }
         return;
     }
@@ -4793,18 +4802,32 @@ cv.addEventListener('mousedown', e => {
             if (eh.s.farmSink && farmSinkEdgeKey(eh.s) === eh.key && !eh.key.startsWith('diag_')) {
                 ensureFsHalves(eh.s, eh.key);
                 const fr = farmSinkRectAbs(eh.s);
-                const half = p.x < fr.cxAbs ? 'fsLeft' : 'fsRight';
-                const halfData = eh.s.edges[eh.key][half];
-                const fsLx = fr.x, fsRx = fr.x + fr.w;
-                const goingRight = eh.x2 >= eh.x1;
-                let hX1, hY1, hX2, hY2;
-                if (half === 'fsLeft') {
-                    if (goingRight) { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsLx; hY2 = eh.y1; }
-                    else            { hX1 = fsLx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                const isVertSeg = Math.abs(eh.x1 - eh.x2) < 0.5;
+                let half, hX1, hY1, hX2, hY2;
+                if (isVertSeg) {
+                    const fsTopY = fr.y, fsBotY = fr.y + fr.h;
+                    half = p.y < (fr.y + fr.h / 2) ? 'fsLeft' : 'fsRight';
+                    const goingDown = eh.y2 >= eh.y1;
+                    if (half === 'fsLeft') {
+                        if (goingDown) { hX1 = eh.x1; hY1 = eh.y1; hX2 = eh.x1; hY2 = fsTopY; }
+                        else           { hX1 = eh.x2; hY1 = fsTopY; hX2 = eh.x2; hY2 = eh.y2; }
+                    } else {
+                        if (goingDown) { hX1 = eh.x2; hY1 = fsBotY; hX2 = eh.x2; hY2 = eh.y2; }
+                        else           { hX1 = eh.x1; hY1 = eh.y1; hX2 = eh.x1; hY2 = fsBotY; }
+                    }
                 } else {
-                    if (goingRight) { hX1 = fsRx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
-                    else            { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsRx; hY2 = eh.y1; }
+                    const fsLx = fr.x, fsRx = fr.x + fr.w;
+                    half = p.x < fr.cxAbs ? 'fsLeft' : 'fsRight';
+                    const goingRight = eh.x2 >= eh.x1;
+                    if (half === 'fsLeft') {
+                        if (goingRight) { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsLx; hY2 = eh.y1; }
+                        else            { hX1 = fsLx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                    } else {
+                        if (goingRight) { hX1 = fsRx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                        else            { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsRx; hY2 = eh.y1; }
+                    }
                 }
+                const halfData = eh.s.edges[eh.key][half];
                 if (halfData?.type === 'segmented' && halfData.segments?.length) {
                     const hLen = Math.hypot(hX2 - hX1, hY2 - hY1);
                     if (hLen >= 1) {
@@ -4891,15 +4914,30 @@ cv.addEventListener('mousedown', e => {
             if (!isChamfer && eh.s.farmSink && farmSinkEdgeKey(eh.s) === eh.key) {
                 ensureFsHalves(eh.s, eh.key);
                 const fr = farmSinkRectAbs(eh.s);
-                const half = p.x < fr.cxAbs ? 'fsLeft' : 'fsRight';
-                const fsLx = fr.x, fsRx = fr.x + fr.w;
-                const goingRight = eh.x2 >= eh.x1;
-                if (half === 'fsLeft') {
-                    if (goingRight) { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsLx; hY2 = eh.y1; }
-                    else            { hX1 = fsLx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                const isVertSeg = Math.abs(eh.x1 - eh.x2) < 0.5;
+                let half;
+                if (isVertSeg) {
+                    const fsTopY = fr.y, fsBotY = fr.y + fr.h;
+                    half = p.y < (fr.y + fr.h / 2) ? 'fsLeft' : 'fsRight';
+                    const goingDown = eh.y2 >= eh.y1;
+                    if (half === 'fsLeft') {
+                        if (goingDown) { hX1 = eh.x1; hY1 = eh.y1; hX2 = eh.x1; hY2 = fsTopY; }
+                        else           { hX1 = eh.x2; hY1 = fsTopY; hX2 = eh.x2; hY2 = eh.y2; }
+                    } else {
+                        if (goingDown) { hX1 = eh.x2; hY1 = fsBotY; hX2 = eh.x2; hY2 = eh.y2; }
+                        else           { hX1 = eh.x1; hY1 = eh.y1; hX2 = eh.x1; hY2 = fsBotY; }
+                    }
                 } else {
-                    if (goingRight) { hX1 = fsRx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
-                    else            { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsRx; hY2 = eh.y1; }
+                    half = p.x < fr.cxAbs ? 'fsLeft' : 'fsRight';
+                    const fsLx = fr.x, fsRx = fr.x + fr.w;
+                    const goingRight = eh.x2 >= eh.x1;
+                    if (half === 'fsLeft') {
+                        if (goingRight) { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsLx; hY2 = eh.y1; }
+                        else            { hX1 = fsLx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                    } else {
+                        if (goingRight) { hX1 = fsRx; hY1 = eh.y2; hX2 = eh.x2; hY2 = eh.y2; }
+                        else            { hX1 = eh.x1; hY1 = eh.y1; hX2 = fsRx; hY2 = eh.y1; }
+                    }
                 }
                 isFsHalf = true;
                 fsHalfParent = eh.s.edges[eh.key];
