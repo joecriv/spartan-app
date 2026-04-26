@@ -1370,6 +1370,19 @@ function nearestEdge(mx, my) {
                 const d = distToSegment(mx, my, nv.pin[0], nv.pin[1], nv.pout[0], nv.pout[1]);
                 if (d < bestD) { bestD = d; best = { s, key:dk, label:'Chanfrein L'+i, x1:nv.pin[0], y1:nv.pin[1], x2:nv.pout[0], y2:nv.pout[1] }; }
             }
+            // Check notch walls (per check)
+            if (s.checks && s.checks.length) {
+                const basePoly = lShapePolygon(s);
+                for (const c of s.checks) {
+                    if (c.vertexIdx == null) continue;
+                    const cp = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    if (!cp) continue;
+                    const dac = distToSegment(mx, my, cp.A[0], cp.A[1], cp.C[0], cp.C[1]);
+                    if (dac < bestD) { bestD = dac; best = { s, key: `lck${c.vertexIdx}_ac`, label: `Check ${c.vertexIdx} A`, x1:cp.A[0], y1:cp.A[1], x2:cp.C[0], y2:cp.C[1] }; }
+                    const dcb = distToSegment(mx, my, cp.C[0], cp.C[1], cp.B[0], cp.B[1]);
+                    if (dcb < bestD) { bestD = dcb; best = { s, key: `lck${c.vertexIdx}_cb`, label: `Check ${c.vertexIdx} B`, x1:cp.C[0], y1:cp.C[1], x2:cp.B[0], y2:cp.B[1] }; }
+                }
+            }
         } else if (s.shapeType === 'u') {
             const uverts = uShapeVerts(s);
             // Border segments adjusted to corner treatments (like L-shape)
@@ -1385,6 +1398,19 @@ function nearestEdge(mx, my) {
                 const dk = `diag_uc${i}`;
                 const d = distToSegment(mx, my, nv.pin[0], nv.pin[1], nv.pout[0], nv.pout[1]);
                 if (d < bestD) { bestD = d; best = { s, key:dk, label:'Chanfrein U'+i, x1:nv.pin[0], y1:nv.pin[1], x2:nv.pout[0], y2:nv.pout[1] }; }
+            }
+            // Check notch walls
+            if (s.checks && s.checks.length) {
+                const basePoly = uShapePolygon(s);
+                for (const c of s.checks) {
+                    if (c.vertexIdx == null) continue;
+                    const cp = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    if (!cp) continue;
+                    const dac = distToSegment(mx, my, cp.A[0], cp.A[1], cp.C[0], cp.C[1]);
+                    if (dac < bestD) { bestD = dac; best = { s, key: `uck${c.vertexIdx}_ac`, label: `Check ${c.vertexIdx} A`, x1:cp.A[0], y1:cp.A[1], x2:cp.C[0], y2:cp.C[1] }; }
+                    const dcb = distToSegment(mx, my, cp.C[0], cp.C[1], cp.B[0], cp.B[1]);
+                    if (dcb < bestD) { bestD = dcb; best = { s, key: `uck${c.vertexIdx}_cb`, label: `Check ${c.vertexIdx} B`, x1:cp.C[0], y1:cp.C[1], x2:cp.B[0], y2:cp.B[1] }; }
+                }
             }
         } else if (s.shapeType === 'bsp') {
             const sides = bspSides(s);
@@ -1421,6 +1447,39 @@ function nearestEdge(mx, my) {
                 if (ch[ck] <= 0) continue;
                 const d = distToSegment(mx, my, dc.x1, dc.y1, dc.x2, dc.y2);
                 if (d < bestD) { bestD = d; best = { s, key:dc.key, label:'Chanfrein '+ck.toUpperCase(), x1:dc.x1, y1:dc.y1, x2:dc.x2, y2:dc.y2 }; }
+            }
+            // Rect check notch walls — selectable for edge profiles
+            if (s.checks && s.checks.length) {
+                for (const c of s.checks) {
+                    if (!c.cornerKey) continue;
+                    const w = c.w, d = c.d;
+                    let ckCands = [];
+                    if (c.cornerKey === 'nw') {
+                        ckCands = [
+                            { key:'ck_nw_h', x1: s.x,     y1: s.y + d, x2: s.x + w, y2: s.y + d },
+                            { key:'ck_nw_v', x1: s.x + w, y1: s.y + d, x2: s.x + w, y2: s.y     },
+                        ];
+                    } else if (c.cornerKey === 'ne') {
+                        ckCands = [
+                            { key:'ck_ne_v', x1: s.x + s.w - w, y1: s.y,     x2: s.x + s.w - w, y2: s.y + d },
+                            { key:'ck_ne_h', x1: s.x + s.w - w, y1: s.y + d, x2: s.x + s.w,     y2: s.y + d },
+                        ];
+                    } else if (c.cornerKey === 'se') {
+                        ckCands = [
+                            { key:'ck_se_h', x1: s.x + s.w,     y1: s.y + s.h - d, x2: s.x + s.w - w, y2: s.y + s.h - d },
+                            { key:'ck_se_v', x1: s.x + s.w - w, y1: s.y + s.h - d, x2: s.x + s.w - w, y2: s.y + s.h     },
+                        ];
+                    } else if (c.cornerKey === 'sw') {
+                        ckCands = [
+                            { key:'ck_sw_v', x1: s.x + w, y1: s.y + s.h,     x2: s.x + w, y2: s.y + s.h - d },
+                            { key:'ck_sw_h', x1: s.x + w, y1: s.y + s.h - d, x2: s.x,     y2: s.y + s.h - d },
+                        ];
+                    }
+                    for (const cd of ckCands) {
+                        const dist = distToSegment(mx, my, cd.x1, cd.y1, cd.x2, cd.y2);
+                        if (dist < bestD) { bestD = dist; best = { s, key: cd.key, label: 'Check '+c.cornerKey.toUpperCase(), x1: cd.x1, y1: cd.y1, x2: cd.x2, y2: cd.y2 }; }
+                    }
+                }
             }
         }
     }
@@ -2412,8 +2471,8 @@ function drawLShape(s, sel) {
     for (let i = 0; i < n; i++) {
         const c = checkAt[i];
         if (!c) continue;
-        drawEdgeDatum({ type:'none' }, `lck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
-        drawEdgeDatum({ type:'none' }, `lck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
+        drawEdgeDatum(s.edges?.[`lck${i}_ac`] || { type:'none' }, `lck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
+        drawEdgeDatum(s.edges?.[`lck${i}_cb`] || { type:'none' }, `lck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
     }
 
     // 3. Dimension lines (vertex to vertex — shows full physical dimension)
@@ -2624,8 +2683,8 @@ function drawUShape(s, sel) {
     for (let i = 0; i < n; i++) {
         const c = checkAt[i];
         if (!c) continue;
-        drawEdgeDatum({ type:'none' }, `uck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
-        drawEdgeDatum({ type:'none' }, `uck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
+        drawEdgeDatum(s.edges?.[`uck${i}_ac`] || { type:'none' }, `uck${i}_ac`, c.A[0], c.A[1], c.C[0], c.C[1], sel);
+        drawEdgeDatum(s.edges?.[`uck${i}_cb`] || { type:'none' }, `uck${i}_cb`, c.C[0], c.C[1], c.B[0], c.B[1], sel);
     }
 
     // 3. Dimension lines — vertex to vertex
@@ -2931,23 +2990,23 @@ function drawShape(s, sel) {
     if (hasChecks && (s.shapeType || 'rect') === 'rect') {
         if (ckByCorner.nw) {
             const { w, d } = ckByCorner.nw;
-            drawEdgeDatum({ type:'none' }, 'ck_nw_h', s.x,     s.y + d, s.x + w, s.y + d, sel);
-            drawEdgeDatum({ type:'none' }, 'ck_nw_v', s.x + w, s.y + d, s.x + w, s.y,     sel);
+            drawEdgeDatum(s.edges?.ck_nw_h || { type:'none' }, 'ck_nw_h', s.x,     s.y + d, s.x + w, s.y + d, sel);
+            drawEdgeDatum(s.edges?.ck_nw_v || { type:'none' }, 'ck_nw_v', s.x + w, s.y + d, s.x + w, s.y,     sel);
         }
         if (ckByCorner.ne) {
             const { w, d } = ckByCorner.ne;
-            drawEdgeDatum({ type:'none' }, 'ck_ne_v', s.x + s.w - w, s.y,     s.x + s.w - w, s.y + d, sel);
-            drawEdgeDatum({ type:'none' }, 'ck_ne_h', s.x + s.w - w, s.y + d, s.x + s.w,     s.y + d, sel);
+            drawEdgeDatum(s.edges?.ck_ne_v || { type:'none' }, 'ck_ne_v', s.x + s.w - w, s.y,     s.x + s.w - w, s.y + d, sel);
+            drawEdgeDatum(s.edges?.ck_ne_h || { type:'none' }, 'ck_ne_h', s.x + s.w - w, s.y + d, s.x + s.w,     s.y + d, sel);
         }
         if (ckByCorner.se) {
             const { w, d } = ckByCorner.se;
-            drawEdgeDatum({ type:'none' }, 'ck_se_h', s.x + s.w,     s.y + s.h - d, s.x + s.w - w, s.y + s.h - d, sel);
-            drawEdgeDatum({ type:'none' }, 'ck_se_v', s.x + s.w - w, s.y + s.h - d, s.x + s.w - w, s.y + s.h,     sel);
+            drawEdgeDatum(s.edges?.ck_se_h || { type:'none' }, 'ck_se_h', s.x + s.w,     s.y + s.h - d, s.x + s.w - w, s.y + s.h - d, sel);
+            drawEdgeDatum(s.edges?.ck_se_v || { type:'none' }, 'ck_se_v', s.x + s.w - w, s.y + s.h - d, s.x + s.w - w, s.y + s.h,     sel);
         }
         if (ckByCorner.sw) {
             const { w, d } = ckByCorner.sw;
-            drawEdgeDatum({ type:'none' }, 'ck_sw_v', s.x + w, s.y + s.h,     s.x + w, s.y + s.h - d, sel);
-            drawEdgeDatum({ type:'none' }, 'ck_sw_h', s.x + w, s.y + s.h - d, s.x,     s.y + s.h - d, sel);
+            drawEdgeDatum(s.edges?.ck_sw_v || { type:'none' }, 'ck_sw_v', s.x + w, s.y + s.h,     s.x + w, s.y + s.h - d, sel);
+            drawEdgeDatum(s.edges?.ck_sw_h || { type:'none' }, 'ck_sw_h', s.x + w, s.y + s.h - d, s.x,     s.y + s.h - d, sel);
         }
     }
 
@@ -6857,6 +6916,17 @@ function calcPageEdgeLinearFt(page, edgeType) {
                     }
                 }
             }
+            // L-shape check notch walls
+            if (s.checks && s.checks.length) {
+                const basePoly = lShapePolygon(s);
+                for (const c of s.checks) {
+                    if (c.vertexIdx == null) continue;
+                    const cp = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    if (!cp) continue;
+                    if (s.edges?.[`lck${c.vertexIdx}_ac`]?.type === edgeType) totalPx += Math.hypot(cp.C[0]-cp.A[0], cp.C[1]-cp.A[1]);
+                    if (s.edges?.[`lck${c.vertexIdx}_cb`]?.type === edgeType) totalPx += Math.hypot(cp.B[0]-cp.C[0], cp.B[1]-cp.C[1]);
+                }
+            }
         } else if (s.shapeType === 'u') {
             const sides = uShapeSides(s);
             for (const sd of sides) {
@@ -6868,6 +6938,17 @@ function calcPageEdgeLinearFt(page, edgeType) {
                 const rad = (s.corners && s.corners[`uc${i}`]) || 0;
                 if (rad > 0 && s.cornerEdges?.[`uc${i}`]?.type === edgeType) {
                     totalPx += Math.PI / 2 * rad;
+                }
+            }
+            // U-shape check notch walls
+            if (s.checks && s.checks.length) {
+                const basePoly = poly;
+                for (const c of s.checks) {
+                    if (c.vertexIdx == null) continue;
+                    const cp = cornerCheckPoints(basePoly, c.vertexIdx, c);
+                    if (!cp) continue;
+                    if (s.edges?.[`uck${c.vertexIdx}_ac`]?.type === edgeType) totalPx += Math.hypot(cp.C[0]-cp.A[0], cp.C[1]-cp.A[1]);
+                    if (s.edges?.[`uck${c.vertexIdx}_cb`]?.type === edgeType) totalPx += Math.hypot(cp.B[0]-cp.C[0], cp.B[1]-cp.C[1]);
                 }
             }
         } else if (s.shapeType === 'bsp') {
@@ -6910,6 +6991,15 @@ function calcPageEdgeLinearFt(page, edgeType) {
             ];
             for (const cd of chamferSegs) {
                 if (cd.len > 0 && s.chamferEdges?.['diag_'+cd.key]?.type === edgeType) totalPx += cd.len;
+            }
+            // Rect check notch walls
+            if (s.checks && s.checks.length) {
+                for (const c of s.checks) {
+                    if (!c.cornerKey) continue;
+                    const hKey = `ck_${c.cornerKey}_h`, vKey = `ck_${c.cornerKey}_v`;
+                    if (s.edges?.[hKey]?.type === edgeType) totalPx += c.w;
+                    if (s.edges?.[vKey]?.type === edgeType) totalPx += c.d;
+                }
             }
         }
     }
