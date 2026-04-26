@@ -3700,6 +3700,8 @@ function hideAllPopups() {
     currentPopup = null; pendingPlace = null; pendingCorner = null;
     pendingEdge = null; pendingJointShape = null; pendingJointPos = null;
     pendingCheckShape = null; pendingCheckCorner = null; pendingCheckVertex = null;
+    // Re-show the tool-prompt banner if the active tool has one.
+    if (typeof refreshToolPrompt === 'function') refreshToolPrompt();
 }
 
 function screenPos(cvX, cvY) {
@@ -3709,6 +3711,10 @@ function screenPos(cvX, cvY) {
 
 function showPopupAt(el, prefX, prefY) {
     el.style.display = 'block';
+    // While a popup is open, hide the big tool-prompt banner so it can't
+    // visually cover the popup.
+    const tp = document.getElementById('tool-prompt');
+    if (tp) tp.style.display = 'none';
     // measure after display
     requestAnimationFrame(() => {
         const w = el.offsetWidth || 220, h = el.offsetHeight || 180;
@@ -6013,37 +6019,37 @@ function setTool(t) {
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
     const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', polishUnder:'Polish Under Area', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
-    // Tool-prompt banner: instruction overlay shown when a tool is active
-    const prompt = document.getElementById('tool-prompt');
-    if (prompt) {
-        const promptText = {
-            draw:        'Click to add a rectangle',
-            ldraw:       'Click to add an L-shape',
-            udraw:       'Click to add a U-shape',
-            bsp:         'Click to add a backsplash',
-            circle:      'Click to add a circle',
-            sink:        'Click on a piece to place a sink',
-            cooktop:     'Click on a piece to place a cooktop',
-            outlet:      'Click on a piece to place an outlet',
-            bocci:       'Click on a piece to place a bocci outlet',
-            farmsink:    'Click an edge of a piece to place a farmhouse sink',
-            radius:      'Click a corner to add a radius',
-            edge:        'Click an edge to assign the active profile',
-            splitedge:   'Click an edge to add a split point',
-            joint:       'Click inside a piece to place a joint line',
-            check:       'Click a corner to add a check (notch)',
-            polishUnder: 'Click and drag inside a piece to mark a polish-under area',
-            text:        'Click anywhere to place a text annotation',
-            measure:     'Click two points to measure the distance between them',
-        };
-        if (promptText[t]) {
-            prompt.textContent = promptText[t];
-            prompt.style.display = '';
-        } else {
-            prompt.style.display = 'none';
-        }
-    }
+    refreshToolPrompt();
     render();
+}
+const TOOL_PROMPT_TEXT = {
+    draw:        'Click to add a rectangle',
+    ldraw:       'Click to add an L-shape',
+    udraw:       'Click to add a U-shape',
+    bsp:         'Click to add a backsplash',
+    circle:      'Click to add a circle',
+    sink:        'Click on a piece to place a sink',
+    cooktop:     'Click on a piece to place a cooktop',
+    outlet:      'Click on a piece to place an outlet',
+    bocci:       'Click on a piece to place a bocci outlet',
+    farmsink:    'Click an edge of a piece to place a farmhouse sink',
+    radius:      'Click a corner to add a radius',
+    edge:        'Click an edge to assign the active profile',
+    splitedge:   'Click an edge to add a split point',
+    joint:       'Click inside a piece to place a joint line',
+    check:       'Click a corner to add a check (notch)',
+    polishUnder: 'Click and drag inside a piece to mark a polish-under area',
+    text:        'Click anywhere to place a text annotation',
+    measure:     'Click two points to measure the distance between them',
+};
+function refreshToolPrompt() {
+    const prompt = document.getElementById('tool-prompt');
+    if (!prompt) return;
+    // Hide the banner whenever a popup is active so it can't sit on top.
+    if (currentPopup) { prompt.style.display = 'none'; return; }
+    const txt = TOOL_PROMPT_TEXT[tool];
+    if (txt) { prompt.textContent = txt; prompt.style.display = ''; }
+    else prompt.style.display = 'none';
 }
 function deleteSelected() {
     if (selectedPU) {
