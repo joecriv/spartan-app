@@ -3424,7 +3424,7 @@ function showSizePopup(defW, defH, editId) {
 function confirmSizePopup() {
     const w = parseInchInput(popW.value), h = parseInchInput(popH.value);
     if (!w || !h || w <= 0 || h <= 0) { popW.focus(); return; }
-    const wPx = Math.round(w*INCH), hPx = Math.round(h*INCH);
+    const wPx = (w*INCH), hPx = (h*INCH);
     if (editingId !== null) {
         const s = byId(editingId);
         if (s) { pushUndo(); s.w = clamp(wPx,INCH,CW-s.x); s.h = clamp(hPx,INCH,CH-s.y); persist(); }
@@ -3471,7 +3471,7 @@ function confirmSinkPopup() {
     if (sinkMountType === 'vasque') {
         const r = parseInchInput(document.getElementById('sink-vasque-r').value);
         if (!r || r < 1) return;
-        const dPx = Math.round(r * 2 * INCH);
+        const dPx = (r*2*INCH);
         const cp = centeredPos(dPx, dPx);
         pushUndo();
         shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:dPx, h:dPx, subtype:'sink_vasque' }));
@@ -3481,7 +3481,7 @@ function confirmSinkPopup() {
     const w = parseInchInput(document.getElementById('sink-w').value);
     const h = parseInchInput(document.getElementById('sink-h').value);
     if (!w || !h) return;
-    const wPx = Math.round(w*INCH), hPx = Math.round(h*INCH);
+    const wPx = (w*INCH), hPx = (h*INCH);
     const cp = centeredPos(wPx, hPx);
     pushUndo();
     shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:wPx, h:hPx, subtype:`sink_${sinkMountType}` }));
@@ -3506,7 +3506,7 @@ function showCirclePopup() {
 function confirmCirclePopup() {
     const r = parseInchInput(document.getElementById('circle-r').value);
     if (!r || r <= 0) { document.getElementById('circle-r').focus(); return; }
-    const dPx = Math.round(r * 2 * INCH);
+    const dPx = (r*2*INCH);
     const cp = centeredPos(dPx, dPx);
     pushUndo();
     shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:dPx, h:dPx, shapeType:'circle' }));
@@ -3528,7 +3528,7 @@ function confirmCircleEdit() {
     if (!s) return;
     const r = parseInchInput(document.getElementById('circle-r').value);
     if (!r || r <= 0) return;
-    const dPx = Math.round(r * 2 * INCH);
+    const dPx = (r*2*INCH);
     pushUndo(); s.w = dPx; s.h = dPx;
     editingCircleId = null;
     document.getElementById('circle-ok').textContent = 'Add Piece';
@@ -3587,7 +3587,7 @@ function confirmRadiusPopup() {
     if (!pendingCorner) return;
     const valIn = parseInchInput(document.getElementById('radius-val').value) || 0;
     const mode  = document.getElementById('corner-mode').value;
-    const px    = Math.max(0, Math.round(valIn * INCH));
+    const px    = Math.max(0, (valIn*INCH));
     pushUndo();
     if (!pendingCorner.s.corners)  pendingCorner.s.corners  = { nw:0, ne:0, se:0, sw:0 };
     if (!pendingCorner.s.chamfers) pendingCorner.s.chamfers = { nw:0, ne:0, se:0, sw:0 };
@@ -3767,8 +3767,8 @@ function confirmBspPopup() {
     const Wp = parseInchInput(document.getElementById('bsp-Wp').value);
     const Xl = parseInchInput(document.getElementById('bsp-Xl').value);
     if (!W||!Hb||!Hp||!Wp||Xl<0||Wp+Xl>W) return;
-    const wPx=Math.round(W*INCH), hPx=Math.round((Hb+Hp)*INCH);
-    const pWpx=Math.round(Wp*INCH), pHpx=Math.round(Hp*INCH), pXpx=Math.round(Xl*INCH);
+    const wPx=(W*INCH), hPx=((Hb+Hp)*INCH);
+    const pWpx=(Wp*INCH), pHpx=(Hp*INCH), pXpx=(Xl*INCH);
     pushUndo();
     if (editingBspId !== null) {
         const s = byId(editingBspId);
@@ -4195,8 +4195,8 @@ function showLShapePopup(defW, defH, defNW, defNH, editId) {
 function confirmLShapePopup() {
     const {W, H, nW, nH} = getLsWH();
     if (!W||!H||!nW||!nH||nW>=W||nH>=H) return;
-    const wPx=Math.round(W*INCH), hPx=Math.round(H*INCH);
-    const nWpx=Math.round(nW*INCH), nHpx=Math.round(nH*INCH);
+    const wPx=(W*INCH), hPx=(H*INCH);
+    const nWpx=(nW*INCH), nHpx=(nH*INCH);
     pushUndo();
     if (editingLShapeId !== null) {
         const s = byId(editingLShapeId);
@@ -4312,10 +4312,10 @@ function confirmUShapePopup() {
     // Bottom strip must be shorter than each arm so the arms extend above it
     if (fH >= lH || fH >= rH) return;
     const H = Math.max(lH, rH);
-    const wPx = Math.round(A * INCH), hPx = Math.round(H * INCH);
-    const lWpx = Math.round(lW * INCH), rWpx = Math.round(rW * INCH);
-    const fHpx = Math.round(fH * INCH);
-    const lHpx = Math.round(lH * INCH), rHpx = Math.round(rH * INCH);
+    const wPx = (A*INCH), hPx = (H*INCH);
+    const lWpx = (lW*INCH), rWpx = (rW*INCH);
+    const fHpx = (fH*INCH);
+    const lHpx = (lH*INCH), rHpx = (rH*INCH);
     pushUndo();
     if (editingUShapeId !== null) {
         const s = byId(editingUShapeId);
