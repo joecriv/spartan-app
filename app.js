@@ -5910,6 +5910,23 @@ function setTool(t) {
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
     const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', polishUnder:'Polish Under Area', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
+    // Tool-prompt banner: shows for parent-bound item tools
+    const prompt = document.getElementById('tool-prompt');
+    if (prompt) {
+        const promptText = {
+            sink: 'Click on a piece to place the sink',
+            cooktop: 'Click on a piece to place the cooktop',
+            outlet: 'Click on a piece to place the outlet',
+            bocci: 'Click on a piece to place the bocci',
+            farmsink: 'Click a horizontal edge to place the farmhouse sink',
+        };
+        if (promptText[t]) {
+            prompt.textContent = promptText[t];
+            prompt.style.display = '';
+        } else {
+            prompt.style.display = 'none';
+        }
+    }
     render();
 }
 function deleteSelected() {
