@@ -258,6 +258,8 @@ let drawing = false, dStart = null, dCur = null;
 // Polish Under tool drag state + selection
 let drawingPU = false, puParent = null, puStart = null, puCur = null;
 let selectedPU = null; // {shapeId, idx}
+// Parent-bound subtype items: set when sink popup opens, consumed on confirm
+let pendingItemParent = null;
 let pendingPlace = null;
 
 let moving = false, moveOff = null;
@@ -1286,6 +1288,32 @@ function handles(s) {
 function hitHandle(s, mx, my) {
     const R = Math.floor(HND/2) + 2;
     return handles(s).find(h => Math.abs(mx-h.px) <= R && Math.abs(my-h.py) <= R) || null;
+}
+// Returns true if (x, y) lies inside any countertop piece (non-subtype shape).
+// Used to constrain parent-bound items (sinks, cooktops, outlets, boccis).
+function pointInsideAnyPiece(x, y) {
+    for (const shape of shapes) {
+        if (shape.subtype) continue;
+        if (shape.shapeType === 'l') {
+            if (pointInPolygon(x, y, lShapePolygon(shape))) return true;
+        } else if (shape.shapeType === 'u') {
+            if (pointInPolygon(x, y, uShapePolygon(shape))) return true;
+        } else if (shape.shapeType === 'bsp') {
+            if (pointInPolygon(x, y, bspPolygon(shape))) return true;
+        } else if (shape.shapeType === 'circle') {
+            const r = shape.w / 2;
+            if (Math.hypot(x - (shape.x + r), y - (shape.y + r)) <= r) return true;
+        } else {
+            if (x >= shape.x && x <= shape.x + shape.w && y >= shape.y && y <= shape.y + shape.h) return true;
+        }
+    }
+    return false;
+}
+// True when a parent-bound item's center lies inside ANY piece. Items
+// without parentId (legacy) always pass.
+function itemIsOnPiece(s) {
+    if (!s.subtype || s.parentId == null) return true;
+    return pointInsideAnyPiece(s.x + s.w / 2, s.y + s.h / 2);
 }
 function hitShape(mx, my) {
     for (let i = shapes.length-1; i >= 0; i--) {
@@ -2771,6 +2799,20 @@ function drawBSP(s, sel) {
 }
 
 function drawShape(s, sel) {
+    // Parent-bound subtype items get a red warning border when off any piece
+    if (s.subtype && s.parentId != null && !itemIsOnPiece(s)) {
+        ctx.save();
+        ctx.strokeStyle = '#ff3030';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([6, 3]);
+        if (s.subtype === 'bocci') {
+            const br = s.w / 2;
+            ctx.beginPath(); ctx.arc(s.x + br, s.y + br, br + 3, 0, Math.PI * 2); ctx.stroke();
+        } else {
+            ctx.strokeRect(s.x - 3, s.y - 3, s.w + 6, s.h + 6);
+        }
+        ctx.restore();
+    }
     if (s.shapeType === 'l') { drawLShape(s, sel); return; }
     if (s.shapeType === 'u') { drawUShape(s, sel); return; }
     if (s.shapeType === 'bsp') { drawBSP(s, sel); return; }
@@ -3721,24 +3763,42 @@ function showSinkPopup(cvX, cvY) {
     document.getElementById('sink-w').focus();
 }
 function confirmSinkPopup() {
+    // Bind to the parent piece selected at click time. Position centered on
+    // the click point, clamped within the parent's bounding box.
+    const parent = pendingItemParent != null ? byId(pendingItemParent) : null;
+    pendingItemParent = null;
+    const clickX = pendingPlace ? pendingPlace.x : null;
+    const clickY = pendingPlace ? pendingPlace.y : null;
+    function placeChild(wPx, hPx, subtype) {
+        let x, y;
+        if (parent && clickX != null) {
+            x = parent.x + clamp(clickX - parent.x - wPx/2, 0, Math.max(0, parent.w - wPx));
+            y = parent.y + clamp(clickY - parent.y - hPx/2, 0, Math.max(0, parent.h - hPx));
+        } else {
+            const cp = centeredPos(wPx, hPx);
+            x = cp.x; y = cp.y;
+        }
+        const data = { id:nextId, label:`P${nextId}`, x, y, w:wPx, h:hPx, subtype };
+        if (parent) data.parentId = parent.id;
+        shapes.push(normalizeShape(data));
+        nextId++;
+    }
     if (sinkMountType === 'vasque') {
         const r = parseInchInput(document.getElementById('sink-vasque-r').value);
         if (!r || r < 1) return;
         const dPx = (r*2*INCH);
-        const cp = centeredPos(dPx, dPx);
         pushUndo();
-        shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:dPx, h:dPx, subtype:'sink_vasque' }));
-        nextId++; persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
+        placeChild(dPx, dPx, 'sink_vasque');
+        persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
         return;
     }
     const w = parseInchInput(document.getElementById('sink-w').value);
     const h = parseInchInput(document.getElementById('sink-h').value);
     if (!w || !h) return;
     const wPx = (w*INCH), hPx = (h*INCH);
-    const cp = centeredPos(wPx, hPx);
     pushUndo();
-    shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:wPx, h:hPx, subtype:`sink_${sinkMountType}` }));
-    nextId++; persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
+    placeChild(wPx, hPx, `sink_${sinkMountType}`);
+    persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 document.getElementById('sink-ok').addEventListener('click', confirmSinkPopup);
 document.getElementById('sink-cancel').addEventListener('click', () => hideAllPopups());
@@ -4636,7 +4696,13 @@ cv.addEventListener('mousedown', e => {
     }
 
     // ── Sink ──
-    if (tool === 'sink') { showSinkPopup(sx, sy); return; }
+    if (tool === 'sink') {
+        const hit = hitShape(p.x, p.y);
+        if (!hit || hit.subtype) { alert('Click on a countertop piece to place the sink.'); return; }
+        pendingItemParent = hit.id;
+        showSinkPopup(p.x, p.y);
+        return;
+    }
 
     // ── Farmhouse Sink — click a horizontal edge to set center ──
     if (tool === 'farmsink') {
@@ -4719,31 +4785,29 @@ cv.addEventListener('mousedown', e => {
         return;
     }
 
-    // ── Cooktop ──
-    if (tool === 'cooktop') {
-        const wPx = 30*INCH, hPx = 20*INCH;
-        const cp = centeredPos(wPx, hPx);
+    // ── Cooktop / Outlet / Bocci — click a piece to attach ──
+    if (tool === 'cooktop' || tool === 'outlet' || tool === 'bocci') {
+        const hit = hitShape(p.x, p.y);
+        if (!hit || hit.subtype) {
+            alert(`Click on a countertop piece to place the ${tool}.`);
+            return;
+        }
+        let wPx, hPx, subtype;
+        if (tool === 'cooktop') { wPx = 30*INCH; hPx = 20*INCH; subtype = 'cooktop'; }
+        else if (tool === 'outlet') { wPx = 2*INCH; hPx = 4*INCH; subtype = 'outlet'; }
+        else { wPx = 3*INCH; hPx = 3*INCH; subtype = 'bocci'; }
+        // Center on click, clamped to parent bounding box
+        const localX = clamp(p.x - hit.x - wPx/2, 0, Math.max(0, hit.w - wPx));
+        const localY = clamp(p.y - hit.y - hPx/2, 0, Math.max(0, hit.h - hPx));
         pushUndo();
-        shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:wPx, h:hPx, subtype:'cooktop' }));
-        nextId++; persist(); setTool('select'); render(); updateStatus(); return;
-    }
-
-    // ── Outlet ──
-    if (tool === 'outlet') {
-        const wPx = 2*INCH, hPx = 4*INCH;
-        const cp = centeredPos(wPx, hPx);
-        pushUndo();
-        shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:wPx, h:hPx, subtype:'outlet' }));
-        nextId++; persist(); setTool('select'); render(); updateStatus(); return;
-    }
-
-    // ── Bocci ──
-    if (tool === 'bocci') {
-        const wPx = 3*INCH;
-        const cp = centeredPos(wPx, wPx);
-        pushUndo();
-        shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:wPx, h:wPx, subtype:'bocci' }));
-        nextId++; persist(); setTool('select'); render(); updateStatus(); return;
+        shapes.push(normalizeShape({
+            id: nextId, label: `P${nextId}`,
+            x: hit.x + localX, y: hit.y + localY,
+            w: wPx, h: hPx,
+            subtype, parentId: hit.id
+        }));
+        nextId++; persist(); setTool('select'); render(); updateStatus();
+        return;
     }
 
     // ── Radius ──
