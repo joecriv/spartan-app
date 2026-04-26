@@ -255,6 +255,9 @@ let movingText = false;
 let moveTextStart = null; // { mx, my, ox, oy }
 
 let drawing = false, dStart = null, dCur = null;
+// Polish Under tool drag state + selection
+let drawingPU = false, puParent = null, puStart = null, puCur = null;
+let selectedPU = null; // {shapeId, idx}
 let pendingPlace = null;
 
 let moving = false, moveOff = null;
@@ -2953,6 +2956,79 @@ function drawShape(s, sel) {
 // ─────────────────────────────────────────────────────────────
 //  Interior joint lines
 // ─────────────────────────────────────────────────────────────
+// ── Polish-Under areas ──────────────────────────────────────
+// Each polish-under rectangle is stored shape-locally on its parent shape:
+// { x, y, w, h } in shape-local pixels. drawPolishUnders renders them
+// with diagonal hatching + a "POL. UNDER" label oriented along the
+// rectangle's longer dimension.
+function drawPolishUnders(s) {
+    const arr = s.polishUnders || [];
+    if (!arr.length) return;
+    for (let i = 0; i < arr.length; i++) {
+        const r = arr[i];
+        const ax = s.x + r.x, ay = s.y + r.y, aw = r.w, ah = r.h;
+        const isSel = selectedPU && selectedPU.shapeId === s.id && selectedPU.idx === i;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(ax, ay, aw, ah); ctx.clip();
+        // Diagonal hatching
+        ctx.strokeStyle = isSel ? 'rgba(220,80,180,0.95)' : 'rgba(180,60,150,0.75)';
+        ctx.lineWidth = 1;
+        const step = 8;
+        for (let d = -ah; d < aw + ah; d += step) {
+            ctx.beginPath();
+            ctx.moveTo(ax + d,         ay);
+            ctx.lineTo(ax + d + ah,    ay + ah);
+            ctx.stroke();
+        }
+        ctx.restore();
+        // Outline
+        ctx.save();
+        ctx.strokeStyle = isSel ? '#dc50b4' : '#b03c96';
+        ctx.lineWidth = isSel ? 2 : 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(ax, ay, aw, ah);
+        ctx.setLineDash([]);
+        ctx.restore();
+        // Label "POL. UNDER" along longer dimension
+        ctx.save();
+        const cx = ax + aw / 2, cy = ay + ah / 2;
+        const horizontal = aw >= ah;
+        ctx.translate(cx, cy);
+        if (!horizontal) ctx.rotate(-Math.PI / 2);
+        // Auto-fit font size: aim for ~75% of long side
+        const longSide = horizontal ? aw : ah;
+        const shortSide = horizontal ? ah : aw;
+        let fs = Math.min(16, longSide / 7, shortSide / 1.6);
+        if (fs < 7) fs = 7;
+        ctx.font = `bold ${fs}px Raleway,sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.strokeText('POL. UNDER', 0, 0);
+        ctx.fillStyle = '#7a2862';
+        ctx.fillText('POL. UNDER', 0, 0);
+        ctx.restore();
+    }
+}
+function drawPuPreview() {
+    if (!drawingPU || !puParent || !puStart || !puCur) return;
+    const x0 = Math.min(puStart.x, puCur.x), y0 = Math.min(puStart.y, puCur.y);
+    const w = Math.abs(puCur.x - puStart.x), h = Math.abs(puCur.y - puStart.y);
+    if (w < 0.5 || h < 0.5) return;
+    const ax = puParent.x + x0, ay = puParent.y + y0;
+    ctx.save();
+    ctx.strokeStyle = '#dc50b4';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(ax, ay, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(220,80,180,0.18)';
+    ctx.fillRect(ax, ay, w, h);
+    ctx.font = 'bold 11px Raleway,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#7a2862';
+    ctx.fillText(`${fmtInches(w/INCH)} × ${fmtInches(h/INCH)}`, ax + w/2, ay + h/2);
+    ctx.restore();
+}
+
 function drawJointLines(s) {
     if (!s.joints || s.joints.length === 0) return;
     // Polygon used for point-in-shape tests when deciding which side of a
@@ -3177,7 +3253,9 @@ function render() {
     // Draw regular shapes first, then sinks/cooktops/outlets on top
     shapes.filter(s => !s.subtype).forEach(s => drawShape(s, s.id === selected));
     shapes.filter(s => !s.subtype).forEach(s => drawJointLines(s));
+    shapes.filter(s => !s.subtype).forEach(s => drawPolishUnders(s));
     shapes.filter(s => s.subtype).forEach(s => drawShape(s, s.id === selected));
+    drawPuPreview();
     // Draw text annotations on top
     for (const ti of textItems) {
         const isSel = ti.id === selectedText;
@@ -4367,6 +4445,21 @@ cv.addEventListener('mousedown', e => {
         drawing = true; dStart = { x:sx, y:sy }; dCur = { x:sx, y:sy }; return;
     }
 
+    // ── Polish Under: drag a rectangle inside an existing shape ──
+    if (tool === 'polishUnder') {
+        const hit = hitShape(p.x, p.y);
+        if (!hit || hit.subtype) {
+            alert('Click and drag inside a countertop piece to mark a polish-under area.');
+            return;
+        }
+        drawingPU = true;
+        puParent  = hit;
+        puStart   = { x: p.x - hit.x, y: p.y - hit.y };
+        puCur     = { x: p.x - hit.x, y: p.y - hit.y };
+        selectedPU = null;
+        return;
+    }
+
     // ── Sink ──
     if (tool === 'sink') { showSinkPopup(sx, sy); return; }
 
@@ -4916,6 +5009,28 @@ cv.addEventListener('mousedown', e => {
             }
         }
     }
+    // Click on polish-under area → select it
+    {
+        let puHit = null;
+        for (const s of shapes) {
+            if (s.subtype) continue;
+            const arr = s.polishUnders || [];
+            for (let i = arr.length - 1; i >= 0; i--) {
+                const r = arr[i];
+                const rx = s.x + r.x, ry = s.y + r.y;
+                if (p.x >= rx && p.x <= rx + r.w && p.y >= ry && p.y <= ry + r.h) {
+                    puHit = { shapeId: s.id, idx: i }; break;
+                }
+            }
+            if (puHit) break;
+        }
+        if (puHit) {
+            selectedPU = puHit; selected = null; selectedJoint = null; selectedText = null;
+            render(); return;
+        }
+        selectedPU = null;
+    }
+
     // Measurements: click near dim line to select
     selectedMeasure = null;
     for (const m of measurements) {
@@ -5006,6 +5121,13 @@ cv.addEventListener('mousemove', e => {
 
     if ((tool === 'draw' || tool === 'ldraw' || tool === 'udraw' || tool === 'bsp') && drawing) {
         dCur = { x:clamp(snap(p.x),0,CW), y:clamp(snap(p.y),0,CH) };
+        render(); return;
+    }
+
+    if (drawingPU && puParent) {
+        const lx = clamp(p.x - puParent.x, 0, puParent.w);
+        const ly = clamp(p.y - puParent.y, 0, puParent.h);
+        puCur = { x: lx, y: ly };
         render(); return;
     }
 
@@ -5175,6 +5297,22 @@ cv.addEventListener('mouseup', e => {
         }
         return;
     }
+    if (drawingPU && puParent && puStart && puCur) {
+        drawingPU = false;
+        const x0 = Math.min(puStart.x, puCur.x), y0 = Math.min(puStart.y, puCur.y);
+        const x1 = Math.max(puStart.x, puCur.x), y1 = Math.max(puStart.y, puCur.y);
+        const w = x1 - x0, h = y1 - y0;
+        if (w >= INCH && h >= INCH) {
+            pushUndo();
+            if (!puParent.polishUnders) puParent.polishUnders = [];
+            puParent.polishUnders.push({ x: x0, y: y0, w, h });
+            persist();
+        }
+        puParent = null; puStart = null; puCur = null;
+        setTool('select');
+        render();
+        return;
+    }
     if (resizingDiag) { resizingDiag = false; resizeDiagBase = null; persist(); }
     if (movingDiag) { movingDiag = false; persist(); }
     if (movingText) { movingText = false; moveTextStart = null; persist(); }
@@ -5245,7 +5383,7 @@ document.addEventListener('keydown', e => {
             selectedJoint = null; persist(); render(); return;
         }
         if (document.activeElement === document.body) {
-            if (selectedMeasure !== null || selectedText !== null || selected !== null || selectedDiag !== null) {
+            if (selectedMeasure !== null || selectedText !== null || selected !== null || selectedDiag !== null || selectedPU) {
                 e.preventDefault(); deleteSelected(); return;
             }
         }
@@ -5474,7 +5612,7 @@ document.getElementById('text-content').addEventListener('keydown', e => {
 });
 
 // ─────────────────────────────────────────────────────────────
-const TOOL_BTNS = { draw:'btn-draw', ldraw:'btn-ldraw', udraw:'btn-udraw', bsp:'btn-bsp', circle:'btn-circle', select:'btn-select', radius:'btn-radius', edge:'btn-edge', splitedge:'btn-splitedge', joint:'btn-joint', check:'btn-check', sink:'btn-sink', farmsink:'btn-farmsink', cooktop:'btn-cooktop', outlet:'btn-outlet', bocci:'btn-bocci', text:'btn-text', measure:'btn-measure' };
+const TOOL_BTNS = { draw:'btn-draw', ldraw:'btn-ldraw', udraw:'btn-udraw', bsp:'btn-bsp', circle:'btn-circle', select:'btn-select', radius:'btn-radius', edge:'btn-edge', splitedge:'btn-splitedge', joint:'btn-joint', check:'btn-check', polishUnder:'btn-polish-under', sink:'btn-sink', farmsink:'btn-farmsink', cooktop:'btn-cooktop', outlet:'btn-outlet', bocci:'btn-bocci', text:'btn-text', measure:'btn-measure' };
 function setTool(t) {
     ghostText = null; // cancel any floating text
     measurePt1 = null; measureHover = null;
@@ -5482,14 +5620,24 @@ function setTool(t) {
     drawing = false; moving = false; resizing = false; edgeResizing = null; draggingJoint = false; jointSnapCorner = null;
     hovCorner = null; hovEdge = null; hovCornerEdge = null;
     selectedText = null;
-    cv.style.cursor = ['draw','ldraw','udraw','bsp','circle','sink','farmsink','cooktop','outlet','bocci','radius','edge','splitedge','joint','check','measure'].includes(t) ? 'crosshair' : 'default';
+    cv.style.cursor = ['draw','ldraw','udraw','bsp','circle','sink','farmsink','cooktop','outlet','bocci','radius','edge','splitedge','joint','check','polishUnder','measure'].includes(t) ? 'crosshair' : 'default';
     document.getElementById('edge-palette').style.display = t === 'edge' ? 'flex' : 'none';
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
-    const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
+    const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', polishUnder:'Polish Under Area', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
     render();
 }
 function deleteSelected() {
+    if (selectedPU) {
+        const sh = byId(selectedPU.shapeId);
+        if (sh && sh.polishUnders) {
+            pushUndo();
+            sh.polishUnders.splice(selectedPU.idx, 1);
+            selectedPU = null;
+            persist(); render(); return;
+        }
+        selectedPU = null;
+    }
     if (selectedDiag !== null) {
         pushUndo(); profileDiags = profileDiags.filter(d => d.id !== selectedDiag); selectedDiag = null;
         persist(); render(); return;
@@ -5560,7 +5708,7 @@ const SERVICE_RATE_DEFS = [
     { key:'bocci',         label:'Bocci outlet',    desc:'Bocci outlet (2" rond)',                             unit:'each' },
     { key:'fini45',        label:'Fini 45',         desc:'Finition laminée en 45',                             unit:'lf' },
     { key:'lamine',        label:'Lamine',          desc:'Assemblage des morceaux (Laminage)',                  unit:'lf' },
-    { key:'polissageSous', label:'Polissage sous',  desc:'Polissage sous morceau',                             unit:'each' },
+    { key:'polissageSous', label:'Polissage sous',  desc:'Polissage sous morceau',                             unit:'sqft' },
     { key:'installation',  label:'Installation',    desc:'Installation',                                       unit:'sqft' },
     { key:'measurements',  label:'Measurements',    desc:'Measurements',                                       unit:'flat' },
 ];
@@ -6629,6 +6777,7 @@ function calcServiceQtys() {
     let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0, farmSinkQty = 0;
     let outletQty = 0, bocciQty = 0;
     let fini45Lf = 0, lamineLf = 0;
+    let polishUnderSqft = 0;
     let totalSqft = 0;
     for (const page of pages) {
         // Pencil linear feet
@@ -6646,6 +6795,13 @@ function calcServiceQtys() {
         farmSinkQty += sinks.farmSinks;
         outletQty += sinks.outlets;
         bocciQty += sinks.boccis;
+        // Polish-under areas (auto-quantified from drawn rectangles)
+        for (const s of page.shapes) {
+            if (s.subtype) continue;
+            for (const r of (s.polishUnders || [])) {
+                polishUnderSqft += (r.w * r.h) / SQFT_PX2;
+            }
+        }
         // Material area — split by Dekton vs non-Dekton
         for (const s of page.shapes) {
             if (s.subtype) continue;
@@ -6675,7 +6831,7 @@ function calcServiceQtys() {
         cooktopQty, farmSinkQty,
         outletQty, bocciQty,
         fini45Lf, lamineLf,
-        polissageSousQty: pricingData.polissageSousQty || 0,
+        polissageSousQty: polishUnderSqft,
         installationSqft: totalSqft,
         measurementsQty
     };
@@ -6700,7 +6856,7 @@ function getServiceLineItems() {
             case 'bocci':         qty = q.bocciQty;          unitLabel = `${qty} bocci(s)`; break;
             case 'fini45':        qty = q.fini45Lf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
             case 'lamine':        qty = q.lamineLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
-            case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `× ${qty}`; break;
+            case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `${qty.toFixed(2)} sqft`; break;
             case 'installation':  qty = q.installationSqft;  unitLabel = `${qty.toFixed(2)} sqft`; break;
             case 'measurements':  qty = q.measurementsQty;   unitLabel = qty ? 'flat fee' : 'disabled'; break;
         }
@@ -6988,25 +7144,18 @@ function renderPricingPanel() {
         </div>`;
     }
 
-    // ── Polissage sous toggle ────────────────────────────────
-    const psEnabled = (pricingData.polissageSousQty || 0) > 0;
+    // ── Polissage sous (auto-quantified from drawn Pol. Under areas) ──
+    const psItem = allServiceItems.find(i => i.key === 'polissageSous');
+    const psQty = psItem?.qty || 0;
     const psRate = pricingData.rates.polissageSous || 0;
-    const psQty = pricingData.polissageSousQty || 0;
     const psCost = psQty * psRate;
-    if (psEnabled) serviceCostTotal += psCost;
+    if (psQty > 0) serviceCostTotal += psCost;
 
     sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:#e0ddd5">
-                <input type="checkbox" id="pricing-ps-toggle" ${psEnabled ? 'checked' : ''} style="cursor:pointer">
-                Polissage sous morceau
-            </label>
-        </div>
-        <div id="pricing-ps-fields" style="display:${psEnabled ? 'flex' : 'none'};gap:6px;align-items:center;padding:4px 0">
-            <span style="font-size:10px;color:#999">Qty:</span>
-            <input class="mat-input" id="pricing-ps-qty" type="text" inputmode="numeric" value="${psQty || 1}" style="width:50px;text-align:right">
-            <span style="font-size:10px;color:#999">× ${fmt$(psRate)}</span>
-            <span style="font-size:11px;font-weight:700;color:#b09030;margin-left:auto">${psEnabled ? fmt$(psCost) : ''}</span>
+        <div class="price-check-label">Polissage sous morceau</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+            <span style="font-size:10px;color:#999;flex:1">${psQty.toFixed(2)} sqft × ${fmt$(psRate)} <span style="font-size:8.5px;color:#666">(auto from Pol. Under tool)</span></span>
+            <span style="font-size:11px;font-weight:700;color:#b09030">${fmt$(psCost)}</span>
         </div>
     </div>`;
 
