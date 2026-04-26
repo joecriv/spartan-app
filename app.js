@@ -4263,8 +4263,8 @@ function showJointPopup(shape, pos, cvX, cvY, isCornerSnap = false) {
         if (okBtn)   okBtn.textContent   = 'Add Joint';
     }
     currentPopup = 'joint';
-    const sp = screenPos(cvX, cvY);
-    showPopupAt(document.getElementById('joint-popup'), sp.x + 20, sp.y - 20);
+    const cvRect = cv.getBoundingClientRect();
+    showPopupAt(document.getElementById('joint-popup'), cvRect.left + cvRect.width/2 - 145, cvRect.top + 30);
 }
 function confirmJointPopup() {
     if (!pendingJointShape || !pendingJointPos) return;
