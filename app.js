@@ -954,6 +954,51 @@ function clearStaleFsHalves(s) {
         }
     }
 }
+// Capture FS center in WORLD coordinates so a subsequent geometry mutation
+// (resize, edge-drag) can restore the FS to the same absolute spot.
+function fsCaptureWorld(s) {
+    if (!s.farmSink) return null;
+    const fr = farmSinkRectAbs(s);
+    if (!fr) return null;
+    if (fr.vertical) return { wx: fr.segXAbs,  wy: fr.cyAbs };
+    return { wx: fr.cxAbs, wy: fr.segYAbs };
+}
+// Restore FS so its world center sits at the same point on whatever edge
+// (top/bottom/left/right/seg) currently passes through it. For seg edges,
+// refresh segY and clamp cx into the edge length. If the FS would land
+// outside the new edge length, clamp cx to the nearest valid spot.
+function fsRestoreWorld(s, snap) {
+    if (!s.farmSink || !snap) return;
+    const fs = s.farmSink;
+    const fsW = FS_WIDTH_IN * INCH, fsD = FS_DEPTH_IN * INCH;
+    const halfW = fsW / 2;
+    if (fs.edge === 'top' || fs.edge === 'bottom') {
+        const localX = snap.wx - s.x;
+        fs.cx = Math.max(halfW, Math.min(s.w - halfW, localX));
+    } else if (fs.edge === 'left' || fs.edge === 'right') {
+        const localY = snap.wy - s.y;
+        fs.cx = Math.max(halfW, Math.min(s.h - halfW, localY));
+    } else if (fs.edge === 'seg') {
+        const poly = s.shapeType === 'l' ? lShapePolygon(s)
+                   : s.shapeType === 'u' ? uShapePolygon(s) : null;
+        if (!poly) return;
+        const segIdx = parseInt(String(fs.segKey).replace('seg',''), 10);
+        if (segIdx < 0 || segIdx >= poly.length) return;
+        const cur = poly[segIdx], nxt = poly[(segIdx + 1) % poly.length];
+        const isHoriz = Math.abs(cur[1] - nxt[1]) < 0.5;
+        if (isHoriz) {
+            const minX = Math.min(cur[0], nxt[0]) - s.x;
+            const maxX = Math.max(cur[0], nxt[0]) - s.x;
+            fs.cx = Math.max(minX + halfW, Math.min(maxX - halfW, snap.wx - s.x));
+            fs.segY = cur[1] - s.y;
+        } else {
+            const minY = Math.min(cur[1], nxt[1]) - s.y;
+            const maxY = Math.max(cur[1], nxt[1]) - s.y;
+            fs.cx = Math.max(minY + halfW, Math.min(maxY - halfW, snap.wy - s.y));
+            fs.segY = cur[0] - s.x;
+        }
+    }
+}
 
 // Given a center point + normal in NEW shape-local pixels, builds a farm-sink
 // data object compatible with the rendering. For rect, newKey is the new
@@ -1531,6 +1576,7 @@ function hitJoint(mx, my) {
 // ─────────────────────────────────────────────────────────────
 function applyResize(pos) {
     const s = byId(selected); if (!s) return;
+    const fsSnap = fsCaptureWorld(s);
     const b = resizeBase;
     const dx = snap(pos.x - resizeMouse.x), dy = snap(pos.y - resizeMouse.y);
     let { x, y, w, h } = b;
@@ -1548,6 +1594,7 @@ function applyResize(pos) {
     if (x+w > CW) w = CW-x; if (y+h > CH) h = CH-y;
     w = Math.max(INCH,w); h = Math.max(INCH,h);
     Object.assign(s, { x, y, w, h });
+    fsRestoreWorld(s, fsSnap);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1612,6 +1659,7 @@ function rotateCanonical(op, xc, yc, Ac, Hc) {
 function applyEdgeResize(dxa, dya) {
     if (!edgeResizing) return;
     const { s, kind, base } = edgeResizing;
+    const fsSnap = fsCaptureWorld(s);
     if (kind === 'rect') {
         let { x, y, w, h } = base;
         switch (edgeResizing.side) {
@@ -1644,6 +1692,7 @@ function applyEdgeResize(dxa, dya) {
     } else if (kind === 'bsp') {
         applyBspEdgeResize(s, edgeResizing.edgeIdx, dxa, dya, base);
     }
+    fsRestoreWorld(s, fsSnap);
 }
 
 function applyLEdgeResize(s, edgeIdx, dxa, dya, base) {
