@@ -2148,20 +2148,32 @@ function drawEdgeDatum(ed, storeKey, x1, y1, x2, y2, sel, labelOffset) {
     if (etype !== 'none') {
         const def = EDGE_DEFS[etype];
         if (def?.abbr) {
-            const mx = (x1+x2)/2, my = (y1+y2)/2;
-            let lx, ly;
-            if (labelOffset) { lx = mx + labelOffset.dx; ly = my + labelOffset.dy; }
-            else {
-                const ex = x2-x1, ey = y2-y1, len = Math.hypot(ex,ey)||1;
-                lx = mx + (ey/len) * 14;
-                ly = my + (-ex/len) * 14;
-            }
+            const ex = x2-x1, ey = y2-y1, len = Math.hypot(ex,ey)||1;
+            const nx = ey/len, ny = -ex/len; // perpendicular unit normal
             ctx.save();
             ctx.font = 'bold 9px Raleway,sans-serif';
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-            ctx.strokeText(def.abbr, lx, ly);
-            ctx.fillStyle = def.color; ctx.fillText(def.abbr, lx, ly);
+            // Repeat the abbreviation every ~20" along the edge so it
+            // stays readable on B&W prints. Short edges get a single
+            // label at midpoint; long edges get evenly-spaced repeats.
+            const STEP_IN = 20;
+            const lenIn = len / INCH;
+            const count = Math.max(1, Math.floor(lenIn / STEP_IN));
+            for (let i = 0; i < count; i++) {
+                const t = (i + 0.5) / count;
+                const cx = x1 + ex * t;
+                const cy = y1 + ey * t;
+                let lx, ly;
+                if (labelOffset && count === 1) {
+                    lx = cx + labelOffset.dx; ly = cy + labelOffset.dy;
+                } else {
+                    lx = cx + nx * 14;
+                    ly = cy + ny * 14;
+                }
+                ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                ctx.strokeText(def.abbr, lx, ly);
+                ctx.fillStyle = def.color; ctx.fillText(def.abbr, lx, ly);
+            }
             ctx.restore();
         }
     }
@@ -4052,6 +4064,9 @@ document.querySelectorAll('.ep-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         activeEdgeType = btn.dataset.etype;
         document.querySelectorAll('.ep-btn').forEach(b => b.classList.toggle('ep-active', b === btn));
+        _toolPromptDismissed = true;
+        const _tp = document.getElementById('tool-prompt');
+        if (_tp) _tp.style.display = 'none';
     });
 });
 
@@ -6020,6 +6035,7 @@ function setTool(t) {
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
     const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', polishUnder:'Polish Under Area', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
+    _toolPromptDismissed = false;
     refreshToolPrompt();
     render();
 }
@@ -6043,11 +6059,13 @@ const TOOL_PROMPT_TEXT = {
     text:        'Click anywhere to place a text annotation',
     measure:     'Click two points to measure the distance between them',
 };
+let _toolPromptDismissed = false;
 function refreshToolPrompt() {
     const prompt = document.getElementById('tool-prompt');
     if (!prompt) return;
-    // Hide the banner whenever a popup is active so it can't sit on top.
-    if (currentPopup) { prompt.style.display = 'none'; return; }
+    // Hide while popup active or once user has dismissed it (e.g. picked
+    // an edge profile). Reset on tool change in setTool below.
+    if (currentPopup || _toolPromptDismissed) { prompt.style.display = 'none'; return; }
     const txt = TOOL_PROMPT_TEXT[tool];
     if (txt) { prompt.textContent = txt; prompt.style.display = ''; }
     else prompt.style.display = 'none';
