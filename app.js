@@ -301,6 +301,55 @@ function pxToIn(px) {
     return v % 1 === 0 ? v.toFixed(0) : parseFloat(v.toFixed(2)).toString();
 }
 
+// ── Fraction display + parsing (1/16" precision) ──────────────
+// Format a decimal inch value as a fraction string with inch mark, rounded
+// to 1/16. Whole numbers stay whole; fractions are reduced (8/16 → 1/2).
+function fmtInches(v) {
+    if (v == null || isNaN(v)) return '';
+    const sign = v < 0 ? '-' : '';
+    v = Math.abs(v);
+    const total16 = Math.round(v * 16);
+    const whole = Math.floor(total16 / 16);
+    let num = total16 - whole * 16;
+    let den = 16;
+    while (num > 0 && num % 2 === 0) { num /= 2; den /= 2; }
+    if (num === 0) return `${sign}${whole}"`;
+    if (whole === 0) return `${sign}${num}/${den}"`;
+    return `${sign}${whole} ${num}/${den}"`;
+}
+// Format without the trailing inch mark — for places that already render
+// the mark or want the bare number.
+function fmtInchesNoMark(v) {
+    const s = fmtInches(v);
+    return s.replace(/"$/, '');
+}
+// px → fraction string with inch mark
+function pxToInFrac(px) { return fmtInches(px / INCH); }
+// Parse a user-entered measurement. Accepts "30", "30.5", "30 1/2",
+// "30-1/2", "30 1/2\"", "1/2", "1/2\"". Returns Number or NaN.
+function parseInchInput(s) {
+    if (s == null) return NaN;
+    s = String(s).trim().replace(/[″"]+\s*$/, '').replace(/\s+/g, ' ').trim();
+    if (!s) return NaN;
+    if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+    let m = s.match(/^(-?\d+)[ -](\d+)\/(\d+)$/);
+    if (m) {
+        const w = parseInt(m[1], 10);
+        const num = parseInt(m[2], 10);
+        const den = parseInt(m[3], 10);
+        if (!den) return NaN;
+        return (w < 0 ? -1 : 1) * (Math.abs(w) + num / den);
+    }
+    m = s.match(/^(-?\d+)\/(\d+)$/);
+    if (m) {
+        const num = parseInt(m[1], 10);
+        const den = parseInt(m[2], 10);
+        if (!den) return NaN;
+        return num / den;
+    }
+    return NaN;
+}
+
 function mousePos(e) {
     const r = cv.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -579,7 +628,7 @@ function drawOneMeasurement(m, hover) {
 
     const mx2 = (ex1+ex2)/2, my2 = (ey1+ey2)/2;
     const rawIn = lenPx / INCH;
-    const label = (rawIn % 1 === 0 ? rawIn.toFixed(0) : rawIn.toFixed(2)) + '"';
+    const label = fmtInches(rawIn);
     const dimFs = Math.round(13 * dimSizeMultiplier);
     const dimBgH = Math.round(18 * dimSizeMultiplier);
     ctx.font = `bold ${dimFs}px Raleway,sans-serif`;
@@ -2065,7 +2114,7 @@ function drawDimLine(x1, y1, x2, y2, lenPx, shapeId, dimKey) {
 
     const mx = (ex1+ex2)/2, my = (ey1+ey2)/2;
     const rawIn = lenPx / INCH;
-    const label = (rawIn % 1 === 0 ? rawIn.toFixed(0) : rawIn.toFixed(2)) + '"';
+    const label = fmtInches(rawIn);
     const dimFs = Math.round(13 * dimSizeMultiplier);
     const dimBgH = Math.round(18 * dimSizeMultiplier);
     ctx.font = `bold ${dimFs}px Raleway,sans-serif`;
@@ -2233,7 +2282,7 @@ function drawLShape(s, sel) {
                     const lx=nv.curr[0], ly=nv.curr[1];
                     ctx.font='8px Raleway,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
                     ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.8)';
-                    ctx.strokeText(`R${pxToIn(nv.r)}"`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToIn(nv.r)}"`,lx,ly);
+                    ctx.strokeText(`R${pxToInFrac(nv.r)}`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToInFrac(nv.r)}`,lx,ly);
                 }
                 ctx.restore();
             }
@@ -2445,7 +2494,7 @@ function drawUShape(s, sel) {
                     const lx=nv.curr[0], ly=nv.curr[1];
                     ctx.font='8px Raleway,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
                     ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.8)';
-                    ctx.strokeText(`R${pxToIn(nv.r)}"`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToIn(nv.r)}"`,lx,ly);
+                    ctx.strokeText(`R${pxToInFrac(nv.r)}`,lx,ly); ctx.fillStyle='#cc4444'; ctx.fillText(`R${pxToInFrac(nv.r)}`,lx,ly);
                 }
                 ctx.restore();
             }
@@ -2881,7 +2930,7 @@ function drawShape(s, sel) {
         ctx.save();
         ctx.font = '8px Raleway,sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const rlabel = `R${pxToIn(rv)}"`;
+        const rlabel = `R${pxToInFrac(rv)}`;
         const rtw = ctx.measureText(rlabel).width + 6;
         dimClickTargets.push({ rect: [lx - rtw/2, ly - 6, rtw, 12], shapeId: s.id, dimKey: `rad_${key}` });
         ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.8)';
@@ -3035,7 +3084,7 @@ function drawShapeLabel(s) {
             ctx.fillText(isOver ? 'OVERMOUNT' : 'UNDERMOUNT', cx, cy + 5);
             if (s.w >= 48 && s.h >= 36) {
                 ctx.fillStyle = isOver ? '#a0c8e8' : '#3a7a28'; ctx.font = '8px Raleway,sans-serif';
-                ctx.fillText(`${pxToIn(s.w)}″ × ${pxToIn(s.h)}″`, cx, cy + 17);
+                ctx.fillText(`${pxToInFrac(s.w)} × ${pxToInFrac(s.h)}`, cx, cy + 17);
             }
         } else { ctx.font = 'bold 8px Raleway,sans-serif'; ctx.fillText('S', cx, cy); }
         return;
@@ -3057,7 +3106,7 @@ function drawShapeLabel(s) {
         ctx.fillText('COOKTOP', cx, s.y + 9);
         if (s.w >= 40 && s.h >= 24) {
             ctx.font = '8px Raleway,sans-serif'; ctx.fillStyle = '#997700';
-            ctx.fillText(`${pxToIn(s.w)}″ × ${pxToIn(s.h)}″`, cx, s.y + s.h - 9);
+            ctx.fillText(`${pxToInFrac(s.w)} × ${pxToInFrac(s.h)}`, cx, s.y + s.h - 9);
         }
         return;
     }
@@ -3106,7 +3155,7 @@ function drawPreview() {
     if (w >= 20 && h >= 14) {
         ctx.fillStyle = '#b09030'; ctx.font = 'bold 11px Raleway,sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(`${pxToIn(w)}″ × ${pxToIn(h)}″`, x+w/2, y+h/2);
+        ctx.fillText(`${pxToInFrac(w)} × ${pxToInFrac(h)}`, x+w/2, y+h/2);
     }
 }
 
@@ -3354,7 +3403,7 @@ const popH = document.getElementById('pop-h');
 function showSizePopup(defW, defH, editId) {
     hideAllPopups();
     editingId = editId;
-    popW.value = defW; popH.value = defH;
+    popW.value = fmtInchesNoMark(parseFloat(defW)); popH.value = fmtInchesNoMark(parseFloat(defH));
     document.getElementById('pop-title').textContent = editId !== null ? 'Edit Dimensions' : 'Set Dimensions';
     document.getElementById('pop-ok').textContent    = editId !== null ? 'Save'            : 'Add Piece';
     currentPopup = 'size';
@@ -3373,7 +3422,7 @@ function showSizePopup(defW, defH, editId) {
     popW.focus(); popW.select();
 }
 function confirmSizePopup() {
-    const w = parseFloat(popW.value), h = parseFloat(popH.value);
+    const w = parseInchInput(popW.value), h = parseInchInput(popH.value);
     if (!w || !h || w <= 0 || h <= 0) { popW.focus(); return; }
     const wPx = Math.round(w*INCH), hPx = Math.round(h*INCH);
     if (editingId !== null) {
@@ -3420,7 +3469,7 @@ function showSinkPopup(cvX, cvY) {
 }
 function confirmSinkPopup() {
     if (sinkMountType === 'vasque') {
-        const r = parseFloat(document.getElementById('sink-vasque-r').value);
+        const r = parseInchInput(document.getElementById('sink-vasque-r').value);
         if (!r || r < 1) return;
         const dPx = Math.round(r * 2 * INCH);
         const cp = centeredPos(dPx, dPx);
@@ -3429,8 +3478,8 @@ function confirmSinkPopup() {
         nextId++; persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
         return;
     }
-    const w = parseFloat(document.getElementById('sink-w').value);
-    const h = parseFloat(document.getElementById('sink-h').value);
+    const w = parseInchInput(document.getElementById('sink-w').value);
+    const h = parseInchInput(document.getElementById('sink-h').value);
     if (!w || !h) return;
     const wPx = Math.round(w*INCH), hPx = Math.round(h*INCH);
     const cp = centeredPos(wPx, hPx);
@@ -3455,7 +3504,7 @@ function showCirclePopup() {
     const ri = document.getElementById('circle-r'); ri.focus(); ri.select();
 }
 function confirmCirclePopup() {
-    const r = parseFloat(document.getElementById('circle-r').value);
+    const r = parseInchInput(document.getElementById('circle-r').value);
     if (!r || r <= 0) { document.getElementById('circle-r').focus(); return; }
     const dPx = Math.round(r * 2 * INCH);
     const cp = centeredPos(dPx, dPx);
@@ -3467,7 +3516,7 @@ let editingCircleId = null;
 function showCircleEditPopup(s) {
     hideAllPopups();
     editingCircleId = s.id;
-    document.getElementById('circle-r').value = parseFloat(pxToIn(s.w / 2));
+    document.getElementById('circle-r').value = fmtInchesNoMark(s.w / 2 / INCH);
     document.getElementById('circle-ok').textContent = 'Save';
     currentPopup = 'circle';
     const cvRect = cv.getBoundingClientRect();
@@ -3477,7 +3526,7 @@ function showCircleEditPopup(s) {
 function confirmCircleEdit() {
     const s = byId(editingCircleId);
     if (!s) return;
-    const r = parseFloat(document.getElementById('circle-r').value);
+    const r = parseInchInput(document.getElementById('circle-r').value);
     if (!r || r <= 0) return;
     const dPx = Math.round(r * 2 * INCH);
     pushUndo(); s.w = dPx; s.h = dPx;
@@ -3536,7 +3585,7 @@ function showRadiusPopup(corner) {
 }
 function confirmRadiusPopup() {
     if (!pendingCorner) return;
-    const valIn = parseFloat(document.getElementById('radius-val').value) || 0;
+    const valIn = parseInchInput(document.getElementById('radius-val').value) || 0;
     const mode  = document.getElementById('corner-mode').value;
     const px    = Math.max(0, Math.round(valIn * INCH));
     pushUndo();
@@ -3583,7 +3632,7 @@ function showEdgePopup(edgeHit) {
 function confirmEdgePopup() {
     if (!pendingEdge) return;
     if (edgeTypeSel.value === 'mitered') {
-        const miterW = parseFloat(document.getElementById('miter-width-val').value);
+        const miterW = parseInchInput(document.getElementById('miter-width-val').value);
         if (!miterW || miterW <= 0) {
             document.getElementById('miter-width-val').focus();
             document.getElementById('miter-width-val').style.borderColor = '#e05c5c';
@@ -3599,7 +3648,7 @@ function confirmEdgePopup() {
     pendingEdge.s.edges[pendingEdge.key] = { type: edgeTypeSel.value };
     if (edgeTypeSel.value === 'mitered') {
         const s = pendingEdge.s, key = pendingEdge.key;
-        const miterW = parseFloat(document.getElementById('miter-width-val').value);
+        const miterW = parseInchInput(document.getElementById('miter-width-val').value);
         const miterPx = miterW * INCH;
         let stripW, stripH, stripX, stripY;
         if (key === 'top' || key === 'bottom') {
@@ -3656,11 +3705,11 @@ const bspDiagCtx = bspDiagram.getContext('2d');
 function drawBspDiagram() {
     const dc = bspDiagCtx, dw = bspDiagram.width, dh = bspDiagram.height;
     dc.clearRect(0,0,dw,dh);
-    const W  = parseFloat(document.getElementById('bsp-W').value)||100;
-    const Hb = parseFloat(document.getElementById('bsp-Hb').value)||20;
-    const Hp = parseFloat(document.getElementById('bsp-Hp').value)||20;
-    const Wp = parseFloat(document.getElementById('bsp-Wp').value)||20;
-    const Xl = parseFloat(document.getElementById('bsp-Xl').value)||25;
+    const W  = parseInchInput(document.getElementById('bsp-W').value)||100;
+    const Hb = parseInchInput(document.getElementById('bsp-Hb').value)||20;
+    const Hp = parseInchInput(document.getElementById('bsp-Hp').value)||20;
+    const Wp = parseInchInput(document.getElementById('bsp-Wp').value)||20;
+    const Xl = parseInchInput(document.getElementById('bsp-Xl').value)||25;
     const H  = Hb + Hp;
     const pad = 28;
     const sc  = Math.min((dw-pad*2)/W, (dh-pad*2)/H);
@@ -3698,11 +3747,11 @@ function drawBspDiagram() {
 function showBspPopup(defW, defHb, defHp, defWp, defXl, editId) {
     hideAllPopups();
     editingBspId = editId;
-    document.getElementById('bsp-W').value  = defW;
-    document.getElementById('bsp-Hb').value = defHb;
-    document.getElementById('bsp-Hp').value = defHp;
-    document.getElementById('bsp-Wp').value = defWp;
-    document.getElementById('bsp-Xl').value = defXl;
+    document.getElementById('bsp-W').value  = fmtInchesNoMark(parseFloat(defW));
+    document.getElementById('bsp-Hb').value = fmtInchesNoMark(parseFloat(defHb));
+    document.getElementById('bsp-Hp').value = fmtInchesNoMark(parseFloat(defHp));
+    document.getElementById('bsp-Wp').value = fmtInchesNoMark(parseFloat(defWp));
+    document.getElementById('bsp-Xl').value = fmtInchesNoMark(parseFloat(defXl));
     document.getElementById('bsp-title').textContent = editId !== null ? 'Edit Backsplash' : 'Backsplash Dimensions';
     document.getElementById('bsp-ok').textContent    = editId !== null ? 'Save' : 'Add Piece';
     currentPopup = 'bsp';
@@ -3712,11 +3761,11 @@ function showBspPopup(defW, defHb, defHp, defWp, defXl, editId) {
     drawBspDiagram();
 }
 function confirmBspPopup() {
-    const W  = parseFloat(document.getElementById('bsp-W').value);
-    const Hb = parseFloat(document.getElementById('bsp-Hb').value);
-    const Hp = parseFloat(document.getElementById('bsp-Hp').value);
-    const Wp = parseFloat(document.getElementById('bsp-Wp').value);
-    const Xl = parseFloat(document.getElementById('bsp-Xl').value);
+    const W  = parseInchInput(document.getElementById('bsp-W').value);
+    const Hb = parseInchInput(document.getElementById('bsp-Hb').value);
+    const Hp = parseInchInput(document.getElementById('bsp-Hp').value);
+    const Wp = parseInchInput(document.getElementById('bsp-Wp').value);
+    const Xl = parseInchInput(document.getElementById('bsp-Xl').value);
     if (!W||!Hb||!Hp||!Wp||Xl<0||Wp+Xl>W) return;
     const wPx=Math.round(W*INCH), hPx=Math.round((Hb+Hp)*INCH);
     const pWpx=Math.round(Wp*INCH), pHpx=Math.round(Hp*INCH), pXpx=Math.round(Xl*INCH);
@@ -3924,8 +3973,8 @@ function showCheckPopup(cvX, cvY) {
 }
 function confirmCheckPopup() {
     if (!pendingCheckShape || (!pendingCheckCorner && pendingCheckVertex == null)) { hideAllPopups(); return; }
-    const widthIn = Math.max(0.25, parseFloat(document.getElementById('check-width').value) || 4);
-    const depthIn = Math.max(0.25, parseFloat(document.getElementById('check-depth').value) || 4);
+    const widthIn = Math.max(0.25, parseInchInput(document.getElementById('check-width').value) || 4);
+    const depthIn = Math.max(0.25, parseInchInput(document.getElementById('check-depth').value) || 4);
     const s = pendingCheckShape;
     const wPx = widthIn * INCH, dPx = depthIn * INCH;
 
@@ -4031,7 +4080,7 @@ const lsDiagCtx = lsDiagram.getContext('2d');
 
 function getLsValues() {
     const r = {};
-    for (const k of ['A','B','C','D','E','F']) r[k] = parseFloat(document.getElementById(`ls-${k}`).value) || 0;
+    for (const k of ['A','B','C','D','E','F']) r[k] = parseInchInput(document.getElementById(`ls-${k}`).value) || 0;
     return r;
 }
 function getLsWH() { return L_CONF[lshapeCorner].toWH(getLsValues()); }
@@ -4039,7 +4088,7 @@ function getLsWH() { return L_CONF[lshapeCorner].toWH(getLsValues()); }
 function setLsFromWH(W, H, nW, nH) {
     const vals = L_CONF[lshapeCorner].fromWH(W, H, nW, nH);
     for (const k of ['A','B','C','D','E','F'])
-        document.getElementById(`ls-${k}`).value = parseFloat((vals[k]||0).toFixed(2));
+        document.getElementById(`ls-${k}`).value = fmtInchesNoMark(vals[k] || 0);
 }
 
 function updateComputed() {
@@ -4182,12 +4231,12 @@ const usDiagCtx = usDiagram.getContext('2d');
 function drawUShapeDiagram() {
     const dc = usDiagCtx, dw = usDiagram.width, dh = usDiagram.height;
     dc.clearRect(0, 0, dw, dh);
-    const A  = parseFloat(document.getElementById('us-A').value) || 0;
-    const lH = parseFloat(document.getElementById('us-B').value) || 0;
-    const lW = parseFloat(document.getElementById('us-C').value) || 0;
-    const fH = parseFloat(document.getElementById('us-D').value) || 0;
-    const rW = parseFloat(document.getElementById('us-E').value) || 0;
-    const rH = parseFloat(document.getElementById('us-F').value) || 0;
+    const A  = parseInchInput(document.getElementById('us-A').value) || 0;
+    const lH = parseInchInput(document.getElementById('us-B').value) || 0;
+    const lW = parseInchInput(document.getElementById('us-C').value) || 0;
+    const fH = parseInchInput(document.getElementById('us-D').value) || 0;
+    const rW = parseInchInput(document.getElementById('us-E').value) || 0;
+    const rH = parseInchInput(document.getElementById('us-F').value) || 0;
     if (!A || !lH || !rH || !lW || !rW || !fH) return;
     const H = Math.max(lH, rH);
     const pad = 26;
@@ -4252,12 +4301,12 @@ function showUShapePopup(defA, defB, defC, defD, defE, defF, editId) {
 }
 
 function confirmUShapePopup() {
-    const A  = parseFloat(document.getElementById('us-A').value) || 0;
-    const lH = parseFloat(document.getElementById('us-B').value) || 0;
-    const lW = parseFloat(document.getElementById('us-C').value) || 0;
-    const fH = parseFloat(document.getElementById('us-D').value) || 0;
-    const rW = parseFloat(document.getElementById('us-E').value) || 0;
-    const rH = parseFloat(document.getElementById('us-F').value) || 0;
+    const A  = parseInchInput(document.getElementById('us-A').value) || 0;
+    const lH = parseInchInput(document.getElementById('us-B').value) || 0;
+    const lW = parseInchInput(document.getElementById('us-C').value) || 0;
+    const fH = parseInchInput(document.getElementById('us-D').value) || 0;
+    const rW = parseInchInput(document.getElementById('us-E').value) || 0;
+    const rH = parseInchInput(document.getElementById('us-F').value) || 0;
     if (!A || !lH || !rH || !lW || !rW || !fH) return;
     if (lW + rW >= A) return;
     // Bottom strip must be shorter than each arm so the arms extend above it
@@ -9008,7 +9057,7 @@ function slabRefreshPieceList() {
             (p.segIdx == null ? pl.ref.segIdx == null : pl.ref.segIdx === p.segIdx)
         ).length;
         const typeTag = p.segIdx == null && p.shapeType === 'l' ? ' [L]' : p.segIdx == null && p.shapeType === 'u' ? ' [U]' : p.segIdx == null && p.shapeType === 'bsp' ? ' [BSP]' : '';
-        btn.textContent = `${p.label}${typeTag}  ${p.wi.toFixed(2)}" × ${p.hi.toFixed(2)}"  [${p.pageLabel}]`;
+        btn.textContent = `${p.label}${typeTag}  ${fmtInches(p.wi)} × ${fmtInches(p.hi)}  [${p.pageLabel}]`;
         btn.title = placed ? 'Already placed — remove from slab to reuse' : 'Click to place on slab';
         if (placed) {
             btn.disabled = true;
@@ -9521,7 +9570,7 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const lbl = p.customLabel || slabGetPieceLabel(p.ref);
-        const dimStr = `${pw.toFixed(2)}"×${ph.toFixed(2)}"`;
+        const dimStr = `${fmtInches(pw)}×${fmtInches(ph)}`;
         if (pxh > 28) {
             ctx.font = `bold ${Math.max(9, Math.min(14, pxh * 0.3))}px Raleway,sans-serif`;
             ctx.fillText(lbl, px + pxw/2, py + pxh/2 - 8);
@@ -11738,7 +11787,7 @@ async function exportLayoutPDF() {
                 const vals = [
                     p.ref.label || p.ref.name || `Piece ${p.id}`,
                     shapeName,
-                    `${pw.toFixed(2)}" × ${ph.toFixed(2)}"`,
+                    `${fmtInches(pw)} × ${fmtInches(ph)}`,
                     rotLbl,
                     `${p.x.toFixed(2)}", ${p.y.toFixed(2)}"`
                 ];
@@ -12687,7 +12736,7 @@ function kitRefreshList() {
         const isSel = kitSel === i;
         return `<div data-idx="${i}" style="padding:7px 8px;margin-bottom:5px;border-radius:4px;cursor:pointer;user-select:none;border:2px solid ${isSel ? '#b09030' : '#555555'};background:${isSel ? '#2a1a04' : '#1a1a1a'};">
             <div style="color:${isSel ? '#ffdd44' : '#bbbbbb'};font-size:11px;font-weight:bold;">${kp.label}</div>
-            <div style="color:#777777;font-size:10px;">${pw.toFixed(1)}" × ${ph.toFixed(1)}" · ${['0°', '90°', '180°', '270°'][rot]}</div>
+            <div style="color:#777777;font-size:10px;">${fmtInches(pw)} × ${fmtInches(ph)} · ${['0°', '90°', '180°', '270°'][rot]}</div>
             <div style="color:${isSel ? '#ffaa30' : '#555555'};font-size:9px;margin-top:2px;">${isSel ? '✋ selected' : 'click to select'}</div>
         </div>`;
     }).join('');

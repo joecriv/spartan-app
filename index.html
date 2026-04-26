@@ -259,8 +259,8 @@
 <!-- ── Popups ── -->
 <div id="size-popup" class="popup-box">
     <h3 id="pop-title">Set Dimensions</h3>
-    <div class="pop-row"><label>Width <span>(inches)</span></label><input id="pop-w" type="number" min="1" max="240" step="0.5" placeholder="e.g. 36"></div>
-    <div class="pop-row"><label>Height <span>(inches)</span></label><input id="pop-h" type="number" min="1" max="180" step="0.5" placeholder="e.g. 25.5"></div>
+    <div class="pop-row"><label>Width <span>(inches)</span></label><input id="pop-w" type="text" inputmode="text" min="1" max="240" step="0.5" placeholder="e.g. 36"></div>
+    <div class="pop-row"><label>Height <span>(inches)</span></label><input id="pop-h" type="text" inputmode="text" min="1" max="180" step="0.5" placeholder="e.g. 25.5"></div>
     <div class="pop-hint">Inches only &nbsp;|&nbsp; Enter=confirm &nbsp;Esc=cancel</div>
     <div class="pop-btns"><button class="pop-ok" id="pop-ok">Add Piece</button><button class="pop-cancel" id="pop-cancel">Cancel</button></div>
 </div>
@@ -275,12 +275,12 @@
         <button class="tog-btn"        id="lshape-sw" title="Notch bottom-left">┌ SW</button>
     </div>
     <div class="ls-fields">
-        <div class="ls-field"><span class="ls-lbl" id="lbl-A">A</span><input class="ls-inp" id="ls-A" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl" id="lbl-B">B</span><input class="ls-inp" id="ls-B" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl" id="lbl-C">C</span><input class="ls-inp" id="ls-C" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl" id="lbl-D">D</span><input class="ls-inp" id="ls-D" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl" id="lbl-E">E</span><input class="ls-inp" id="ls-E" type="number" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl" id="lbl-F">F</span><input class="ls-inp" id="ls-F" type="number" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-A">A</span><input class="ls-inp" id="ls-A" type="text" inputmode="text" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-B">B</span><input class="ls-inp" id="ls-B" type="text" inputmode="text" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-C">C</span><input class="ls-inp" id="ls-C" type="text" inputmode="text" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-D">D</span><input class="ls-inp" id="ls-D" type="text" inputmode="text" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-E">E</span><input class="ls-inp" id="ls-E" type="text" inputmode="text" min="0.5" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl" id="lbl-F">F</span><input class="ls-inp" id="ls-F" type="text" inputmode="text" min="0.5" max="360" step="0.5"><span class="ls-unit">"</span></div>
     </div>
     <div class="pop-hint" id="lshape-hint">Shaded = auto-computed &nbsp;|&nbsp; inches only</div>
     <div class="pop-btns"><button class="pop-ok" id="lshape-ok">Add Piece</button><button class="pop-cancel" id="lshape-cancel">Cancel</button></div>
@@ -290,12 +290,12 @@
     <h3 id="ushape-title">U-Shape Dimensions</h3>
     <canvas id="ushape-diagram" width="240" height="150" style="display:block;margin:0 auto 8px;background:#141414;border-radius:3px;border:1px solid #333333;"></canvas>
     <div class="ls-fields">
-        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="us-A" type="number" min="1" max="480" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="us-B" type="number" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="us-C" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="us-D" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="us-E" type="number" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">F</span><input class="ls-inp" id="us-F" type="number" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="us-A" type="text" inputmode="text" min="1" max="480" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="us-B" type="text" inputmode="text" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="us-C" type="text" inputmode="text" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="us-D" type="text" inputmode="text" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="us-E" type="text" inputmode="text" min="0.5" max="240" step="0.5"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">F</span><input class="ls-inp" id="us-F" type="text" inputmode="text" min="1" max="360" step="0.5"><span class="ls-unit">"</span></div>
     </div>
     <div class="pop-hint">A=width · B=left arm height · C=left arm width · D=bottom strip height · E=right arm width · F=right arm height — rotate with R</div>
     <div class="pop-btns"><button class="pop-ok" id="ushape-ok">Add Piece</button><button class="pop-cancel" id="ushape-cancel">Cancel</button></div>
@@ -310,7 +310,7 @@
 
 <div id="circle-popup" class="popup-box">
     <h3>Add Circle</h3>
-    <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="circle-r" type="number" min="0.5" max="120" step="0.5" value="12"></div>
+    <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="circle-r" type="text" inputmode="text" min="0.5" max="120" step="0.5" value="12"></div>
     <div class="pop-hint">Enter=confirm &nbsp;Esc=cancel</div>
     <div class="pop-btns"><button class="pop-ok" id="circle-ok">Add Piece</button><button class="pop-cancel" id="circle-cancel">Cancel</button></div>
 </div>
@@ -319,11 +319,11 @@
     <h3>Add Sink</h3>
     <div class="toggle-row"><button class="tog-btn active" id="sink-btn-over">Overmount</button><button class="tog-btn" id="sink-btn-under">Undermount</button><button class="tog-btn" id="sink-btn-vasque">Vasque</button></div>
     <div id="sink-rect-fields">
-        <div class="pop-row"><label>Width <span>(inches)</span></label><input id="sink-w" type="number" min="1" max="240" step="0.5" value="24"></div>
-        <div class="pop-row"><label>Depth <span>(inches)</span></label><input id="sink-h" type="number" min="1" max="180" step="0.5" value="15"></div>
+        <div class="pop-row"><label>Width <span>(inches)</span></label><input id="sink-w" type="text" inputmode="text" min="1" max="240" step="0.5" value="24"></div>
+        <div class="pop-row"><label>Depth <span>(inches)</span></label><input id="sink-h" type="text" inputmode="text" min="1" max="180" step="0.5" value="15"></div>
     </div>
     <div id="sink-vasque-fields" style="display:none">
-        <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="sink-vasque-r" type="number" min="1" max="24" step="0.5" value="8"></div>
+        <div class="pop-row"><label>Radius <span>(inches)</span></label><input id="sink-vasque-r" type="text" inputmode="text" min="1" max="24" step="0.5" value="8"></div>
     </div>
     <div class="pop-btns"><button class="pop-ok" id="sink-ok">Place Sink</button><button class="pop-cancel" id="sink-cancel">Cancel</button></div>
 </div>
@@ -336,7 +336,7 @@
     </div>
     <input type="hidden" id="corner-mode" value="round">
     <div id="radius-round-section">
-        <div class="pop-row"><label id="radius-val-lbl">Rayon <span>(pouces)</span></label><input id="radius-val" type="number" min="0" max="24" step="0.25" value="0"></div>
+        <div class="pop-row"><label id="radius-val-lbl">Rayon <span>(pouces)</span></label><input id="radius-val" type="text" inputmode="text" min="0" max="24" step="0.25" value="0"></div>
         <div class="pop-hint">0 = coin vif</div>
         <div class="pop-btns"><button class="pop-ok" id="radius-ok">Appliquer</button><button class="pop-cancel" id="radius-cancel">Annuler</button></div>
     </div>
@@ -365,7 +365,7 @@
             <option value="waterfall">Waterfall Edge (WF)</option>
         </select>
     </div>
-    <div id="miter-width-row" class="pop-row" style="display:none"><label>Miter width <span>(in)</span></label><input type="number" id="miter-width-val" placeholder="e.g. 3" min="0.5" max="12" step="0.25"></div>
+    <div id="miter-width-row" class="pop-row" style="display:none"><label>Miter width <span>(in)</span></label><input type="text" inputmode="text" id="miter-width-val" placeholder="e.g. 3" min="0.5" max="12" step="0.25"></div>
     <div class="pop-btns"><button class="pop-ok" id="edge-ok">Set Profile</button><button class="pop-cancel" id="edge-cancel">Cancel</button></div>
 </div>
 
@@ -375,11 +375,11 @@
     <h3 id="bsp-title">Backsplash Dimensions</h3>
     <canvas id="bsp-diagram" width="200" height="130" style="display:block;margin:0 auto 8px;background:#141414;border-radius:3px;border:1px solid #333333;"></canvas>
     <div class="ls-fields">
-        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="bsp-W" type="number" min="1" max="480" step="0.5" value="100"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="bsp-Hb" type="number" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="bsp-Hp" type="number" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="bsp-Wp" type="number" min="1" max="480" step="0.5" value="20"><span class="ls-unit">"</span></div>
-        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="bsp-Xl" type="number" min="0" max="480" step="0.5" value="25"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">A</span><input class="ls-inp" id="bsp-W" type="text" inputmode="text" min="1" max="480" step="0.5" value="100"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">B</span><input class="ls-inp" id="bsp-Hb" type="text" inputmode="text" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">C</span><input class="ls-inp" id="bsp-Hp" type="text" inputmode="text" min="1" max="240" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">D</span><input class="ls-inp" id="bsp-Wp" type="text" inputmode="text" min="1" max="480" step="0.5" value="20"><span class="ls-unit">"</span></div>
+        <div class="ls-field"><span class="ls-lbl">E</span><input class="ls-inp" id="bsp-Xl" type="text" inputmode="text" min="0" max="480" step="0.5" value="25"><span class="ls-unit">"</span></div>
     </div>
     <div class="pop-hint">A=Total Width · B=Base Height · C=Step Height · D=Step Width · E=Step Left Offset</div>
     <div class="pop-btns"><button class="pop-ok" id="bsp-ok">Add Piece</button><button class="pop-cancel" id="bsp-cancel">Cancel</button></div>
@@ -388,8 +388,8 @@
 <div id="check-popup" class="popup-box" style="min-width:240px">
     <h3>Add Check (corner notch)</h3>
     <div class="pop-hint" style="margin-bottom:6px">Carve a rectangular notch out of this corner.</div>
-    <div class="pop-row"><label>Width <span>(in)</span></label><input id="check-width" type="number" min="0.25" max="240" step="0.25" value="4"></div>
-    <div class="pop-row"><label>Depth <span>(in)</span></label><input id="check-depth" type="number" min="0.25" max="240" step="0.25" value="4"></div>
+    <div class="pop-row"><label>Width <span>(in)</span></label><input id="check-width" type="text" inputmode="text" min="0.25" max="240" step="0.25" value="4"></div>
+    <div class="pop-row"><label>Depth <span>(in)</span></label><input id="check-depth" type="text" inputmode="text" min="0.25" max="240" step="0.25" value="4"></div>
     <div class="pop-hint" style="font-size:9px;opacity:0.7">Width runs along the horizontal edge, depth along the vertical.</div>
     <div class="pop-btns"><button class="pop-ok" id="check-ok">Add Check</button><button class="pop-cancel" id="check-cancel">Cancel</button></div>
 </div>
