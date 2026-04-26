@@ -1044,6 +1044,22 @@ function rotatePolishUndersCW(s, oldH_local) {
         h: r.w
     }));
 }
+// Rotate parent-bound child items (sinks/cooktops/outlets/boccis) 90° CW
+// with their parent. Position rotates around parent origin (top-left pinned)
+// and dimensions swap so a wide item becomes tall and vice versa.
+function rotateChildItemsCW(parent, oldH_local) {
+    for (const child of shapes) {
+        if (child.parentId !== parent.id) continue;
+        const cx = child.x - parent.x;
+        const cy = child.y - parent.y;
+        const ch = child.h;
+        child.x = parent.x + (oldH_local - cy - ch);
+        child.y = parent.y + cx;
+        const ow = child.w;
+        child.w = child.h;
+        child.h = ow;
+    }
+}
 function rotateJointsCW(s, oldH_local) {
     if (!s.joints || !s.joints.length) return;
     const rotPt = (relX, relY) => ({ relX: oldH_local - relY, relY: relX });
@@ -1664,6 +1680,7 @@ function hitJoint(mx, my) {
 function applyResize(pos) {
     const s = byId(selected); if (!s) return;
     const fsSnap = fsCaptureWorld(s);
+    const oldX = s.x, oldY = s.y;
     const b = resizeBase;
     const dx = snap(pos.x - resizeMouse.x), dy = snap(pos.y - resizeMouse.y);
     let { x, y, w, h } = b;
@@ -1682,6 +1699,17 @@ function applyResize(pos) {
     w = Math.max(INCH,w); h = Math.max(INCH,h);
     Object.assign(s, { x, y, w, h });
     fsRestoreWorld(s, fsSnap);
+    // Move parent-bound child items by the same shift (so they stay
+    // attached to the side that moved, e.g. NW/SW/W handles).
+    const cdx = s.x - oldX, cdy = s.y - oldY;
+    if (cdx || cdy) {
+        for (const child of shapes) {
+            if (child.parentId === s.id) {
+                child.x += cdx;
+                child.y += cdy;
+            }
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1747,6 +1775,7 @@ function applyEdgeResize(dxa, dya) {
     if (!edgeResizing) return;
     const { s, kind, base } = edgeResizing;
     const fsSnap = fsCaptureWorld(s);
+    const oldX = s.x, oldY = s.y;
     if (kind === 'rect') {
         let { x, y, w, h } = base;
         switch (edgeResizing.side) {
@@ -1780,6 +1809,12 @@ function applyEdgeResize(dxa, dya) {
         applyBspEdgeResize(s, edgeResizing.edgeIdx, dxa, dya, base);
     }
     fsRestoreWorld(s, fsSnap);
+    const cdx = s.x - oldX, cdy = s.y - oldY;
+    if (cdx || cdy) {
+        for (const child of shapes) {
+            if (child.parentId === s.id) { child.x += cdx; child.y += cdy; }
+        }
+    }
 }
 
 function applyLEdgeResize(s, edgeIdx, dxa, dya, base) {
@@ -5468,7 +5503,22 @@ cv.addEventListener('mousemove', e => {
     }
     if (moving) {
         const s = byId(selected);
-        if (s) { s.x = clamp(snap(p.x-moveOff.x),0,CW-s.w); s.y = clamp(snap(p.y-moveOff.y),0,CH-s.h); render(); }
+        if (s) {
+            const oldX = s.x, oldY = s.y;
+            s.x = clamp(snap(p.x-moveOff.x),0,CW-s.w);
+            s.y = clamp(snap(p.y-moveOff.y),0,CH-s.h);
+            const dx = s.x - oldX, dy = s.y - oldY;
+            if (dx || dy) {
+                // Move all child items (parent-bound subtype shapes) with the parent
+                for (const child of shapes) {
+                    if (child.parentId === s.id) {
+                        child.x += dx;
+                        child.y += dy;
+                    }
+                }
+            }
+            render();
+        }
         return;
     }
 
@@ -5709,6 +5759,7 @@ document.addEventListener('keydown', e => {
                 clearStaleFsHalves(s);
                 if (s.farmSink) ensureFsHalves(s, farmSinkEdgeKey(s));
                 rotatePolishUndersCW(s, oldH_local);
+                rotateChildItemsCW(s, oldH_local);
             } else if (s.shapeType === 'u') {
                 // U polygon vertex indices are stable across uOpening rotations,
                 // so s.checks[].vertexIdx stays unchanged.
@@ -5731,6 +5782,7 @@ document.addEventListener('keydown', e => {
                 }
                 rotateJointsCW(s, oldH_local);
                 rotatePolishUndersCW(s, oldH_local);
+                rotateChildItemsCW(s, oldH_local);
                 clearStaleFsHalves(s);
                 if (s.farmSink) ensureFsHalves(s, farmSinkEdgeKey(s));
             } else if (s.shapeType === 'circle') {
@@ -5814,6 +5866,7 @@ document.addEventListener('keydown', e => {
                 const oldW = s.w; s.w = s.h; s.h = oldW;
                 rotateJointsCW(s, oldH_local);
                 rotatePolishUndersCW(s, oldH_local);
+                rotateChildItemsCW(s, oldH_local);
                 // Rotate farm sink: rect 'top'→'right'→'bottom'→'left'.
                 if (isRect && fsCN) {
                     const newCenter = [oldH_local - fsCN.center[1], fsCN.center[0]];
