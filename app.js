@@ -5963,15 +5963,28 @@ function setTool(t) {
     Object.entries(TOOL_BTNS).forEach(([k,id]) => document.getElementById(id).classList.toggle('active', k === t));
     const labels = { draw:'Draw Rectangle', ldraw:'Draw L-Shape', udraw:'Draw U-Shape', bsp:'Draw Backsplash', circle:'Draw Circle', select:'Select / Move', radius:'Add Radius', edge:'Edge Profile', splitedge:'Split Edge', joint:'Joint Line', check:'Check (notch)', polishUnder:'Polish Under Area', sink:'Sink', farmsink:'Farmhouse Sink (30×16)', cooktop:'Cooktop', outlet:'Outlet (2×4")', bocci:'Bocci Outlet (2" circle)', text:'Add Text', measure:'Outil de Mesure' };
     document.getElementById('st-tool').innerHTML = `Tool: <b>${labels[t]||t}</b>`;
-    // Tool-prompt banner: shows for parent-bound item tools
+    // Tool-prompt banner: instruction overlay shown when a tool is active
     const prompt = document.getElementById('tool-prompt');
     if (prompt) {
         const promptText = {
-            sink: 'Click on a piece to place the sink',
-            cooktop: 'Click on a piece to place the cooktop',
-            outlet: 'Click on a piece to place the outlet',
-            bocci: 'Click on a piece to place the bocci',
-            farmsink: 'Click a horizontal edge to place the farmhouse sink',
+            draw:        'Click to add a rectangle',
+            ldraw:       'Click to add an L-shape',
+            udraw:       'Click to add a U-shape',
+            bsp:         'Click to add a backsplash',
+            circle:      'Click to add a circle',
+            sink:        'Click on a piece to place a sink',
+            cooktop:     'Click on a piece to place a cooktop',
+            outlet:      'Click on a piece to place an outlet',
+            bocci:       'Click on a piece to place a bocci outlet',
+            farmsink:    'Click an edge of a piece to place a farmhouse sink',
+            radius:      'Click a corner to add a radius',
+            edge:        'Click an edge to assign the active profile',
+            splitedge:   'Click an edge to add a split point',
+            joint:       'Click inside a piece to place a joint line',
+            check:       'Click a corner to add a check (notch)',
+            polishUnder: 'Click and drag inside a piece to mark a polish-under area',
+            text:        'Click anywhere to place a text annotation',
+            measure:     'Click two points to measure the distance between them',
         };
         if (promptText[t]) {
             prompt.textContent = promptText[t];
