@@ -3776,10 +3776,10 @@ function confirmSizePopup() {
     hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 document.getElementById('pop-ok').addEventListener('click', confirmSizePopup);
-document.getElementById('pop-cancel').addEventListener('click', () => { hideAllPopups(); render(); });
+document.getElementById('pop-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); render(); });
 [popW, popH].forEach(inp => inp.addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); confirmSizePopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); render(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); render(); }
     e.stopPropagation();
 }));
 
@@ -3845,10 +3845,10 @@ function confirmSinkPopup() {
     persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 document.getElementById('sink-ok').addEventListener('click', confirmSinkPopup);
-document.getElementById('sink-cancel').addEventListener('click', () => hideAllPopups());
+document.getElementById('sink-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); });
 ['sink-w','sink-h','sink-vasque-r'].forEach(id => document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); confirmSinkPopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 }));
 
@@ -3931,7 +3931,7 @@ document.getElementById('chamfer-pick-btn').addEventListener('click', () => {
     hideAllPopups();
     render();
 });
-document.getElementById('radius-cancel2').addEventListener('click', () => hideAllPopups());
+document.getElementById('radius-cancel2').addEventListener('click', () => { hideAllPopups(); setTool('select'); });
 
 function showRadiusPopup(corner) {
     hideAllPopups(); pendingCorner = corner;
@@ -3962,10 +3962,10 @@ function confirmRadiusPopup() {
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('radius-ok').addEventListener('click', confirmRadiusPopup);
-document.getElementById('radius-cancel').addEventListener('click', () => hideAllPopups());
+document.getElementById('radius-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); });
 document.getElementById('radius-val').addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); confirmRadiusPopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 });
 
@@ -4029,7 +4029,7 @@ function confirmEdgePopup() {
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('edge-ok').addEventListener('click', confirmEdgePopup);
-document.getElementById('edge-cancel').addEventListener('click', () => hideAllPopups());
+document.getElementById('edge-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); });
 edgeTypeSel.addEventListener('change', () => {
     const isMiter = edgeTypeSel.value === 'mitered';
     document.getElementById('miter-width-row').style.display = isMiter ? 'flex' : 'none';
@@ -4037,12 +4037,12 @@ edgeTypeSel.addEventListener('change', () => {
 });
 document.getElementById('miter-width-val').addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); confirmEdgePopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 });
 edgeTypeSel.addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); confirmEdgePopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 });
 
@@ -4146,7 +4146,7 @@ function confirmBspPopup() {
     hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 document.getElementById('bsp-ok').addEventListener('click', confirmBspPopup);
-document.getElementById('bsp-cancel').addEventListener('click', () => { hideAllPopups(); render(); });
+document.getElementById('bsp-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); render(); });
 ['bsp-W','bsp-Hb','bsp-Hp','bsp-Wp','bsp-Xl'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
         if (e.key==='Enter')  { e.preventDefault(); confirmBspPopup(); }
@@ -4316,7 +4316,7 @@ function confirmJointPopup() {
     persist(); hideAllPopups(); setTool('select'); render();
 }
 document.getElementById('joint-ok').addEventListener('click', confirmJointPopup);
-document.getElementById('joint-cancel').addEventListener('click', () => hideAllPopups());
+document.getElementById('joint-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); });
 
 // ── Check (notch) popup ──────────────────────────────────────
 // A "check" is a rectangular notch cut out of a CORNER of a rect piece, used
@@ -4380,12 +4380,12 @@ document.getElementById('check-cancel').addEventListener('click', () => {
 });
 document.getElementById('check-width').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); confirmCheckPopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 });
 document.getElementById('check-depth').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); confirmCheckPopup(); }
-    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+    if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
     e.stopPropagation();
 });
 
@@ -4574,11 +4574,11 @@ function confirmLShapePopup() {
     hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 document.getElementById('lshape-ok').addEventListener('click', confirmLShapePopup);
-document.getElementById('lshape-cancel').addEventListener('click', () => { hideAllPopups(); render(); });
+document.getElementById('lshape-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); render(); });
 ['A','B','C','D','E','F'].forEach(k => {
     document.getElementById(`ls-${k}`).addEventListener('keydown', e => {
         if (e.key === 'Enter')  { e.preventDefault(); confirmLShapePopup(); }
-        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); render(); }
+        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); render(); }
         e.stopPropagation();
     });
 });
@@ -4709,11 +4709,11 @@ function confirmUShapePopup() {
 }
 
 document.getElementById('ushape-ok').addEventListener('click', confirmUShapePopup);
-document.getElementById('ushape-cancel').addEventListener('click', () => { hideAllPopups(); render(); });
+document.getElementById('ushape-cancel').addEventListener('click', () => { hideAllPopups(); setTool('select'); render(); });
 ['us-A','us-B','us-C','us-D','us-E','us-F'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
         if (e.key === 'Enter')  { e.preventDefault(); confirmUShapePopup(); }
-        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); render(); }
+        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); render(); }
         e.stopPropagation();
     });
 });
@@ -6808,7 +6808,7 @@ document.getElementById('matdb-pop-cancel').addEventListener('click', hideAllPop
 ['matdb-pop-name','matdb-pop-cost','matdb-pop-slabw','matdb-pop-slabh'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
         if (e.key === 'Enter')  { e.preventDefault(); confirmMatdbPopup(); }
-        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); }
+        if (e.key === 'Escape') { e.preventDefault(); hideAllPopups(); setTool('select'); }
         e.stopPropagation();
     });
 });
