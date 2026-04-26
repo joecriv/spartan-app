@@ -19,7 +19,8 @@ const SYNC_KEYS = ['spartan_v4', 'spartan_form', 'spartan_pricing', 'spartan_mat
 function scheduleSyncToRemote() {
     if (!currentUserId) return;
     clearTimeout(_syncTimer);
-    _syncTimer = setTimeout(_syncAllToRemote, 3000);
+    // 8s debounce reduces Disk IO by batching rapid edits into one write.
+    _syncTimer = setTimeout(_syncAllToRemote, 8000);
 }
 
 async function _syncAllToRemote() {
