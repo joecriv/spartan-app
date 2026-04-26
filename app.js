@@ -3855,9 +3855,16 @@ function confirmCirclePopup() {
     const r = parseInchInput(document.getElementById('circle-r').value);
     if (!r || r <= 0) { document.getElementById('circle-r').focus(); return; }
     const dPx = (r*2*INCH);
-    const cp = centeredPos(dPx, dPx);
+    let cx, cy;
+    if (pendingPlace) {
+        cx = clamp(pendingPlace.x - dPx / 2, 0, CW - dPx);
+        cy = clamp(pendingPlace.y - dPx / 2, 0, CH - dPx);
+    } else {
+        const cp = centeredPos(dPx, dPx);
+        cx = cp.x; cy = cp.y;
+    }
     pushUndo();
-    shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cp.x, y:cp.y, w:dPx, h:dPx, shapeType:'circle' }));
+    shapes.push(normalizeShape({ id:nextId, label:`P${nextId}`, x:cx, y:cy, w:dPx, h:dPx, shapeType:'circle' }));
     nextId++; persist(); hideAllPopups(); setTool('select'); render(); updateStatus();
 }
 let editingCircleId = null;
@@ -4715,6 +4722,13 @@ cv.addEventListener('mousedown', e => {
         drawing = true; dStart = { x:sx, y:sy }; dCur = { x:sx, y:sy }; return;
     }
 
+    // ── Circle: click to place, popup for radius ──
+    if (tool === 'circle') {
+        pendingPlace = { x: sx, y: sy };
+        showCirclePopup();
+        return;
+    }
+
     // ── Polish Under: drag a rectangle inside an existing shape ──
     if (tool === 'polishUnder') {
         const hit = hitShape(p.x, p.y);
@@ -4739,11 +4753,11 @@ cv.addEventListener('mousedown', e => {
         return;
     }
 
-    // ── Farmhouse Sink — click a horizontal edge to set center ──
+    // ── Farmhouse Sink — click any axis-aligned edge of a piece ──
     if (tool === 'farmsink') {
         const eh = nearestEdge(p.x, p.y);
         if (!eh || eh.s.subtype) {
-            alert('Farmhouse sink can only be placed on a horizontal edge of a rectangle, L-shape, or U-shape.');
+            alert('Click an edge of a piece to place a farmhouse sink.');
             return;
         }
         const fsWpx = FS_WIDTH_IN * INCH;
@@ -4752,71 +4766,104 @@ cv.addEventListener('mousedown', e => {
             alert('This piece already has a farmhouse sink. Delete the existing one first.');
             return;
         }
+        const isHoriz = Math.abs(eh.y1 - eh.y2) < 0.5;
+        const isVert  = Math.abs(eh.x1 - eh.x2) < 0.5;
+        if (!isHoriz && !isVert) {
+            alert('Farmhouse sink must be placed on a straight (axis-aligned) edge.');
+            return;
+        }
+        // Rect: simple top/bottom/left/right edge keys
         if (eh.s.shapeType === 'rect') {
-            if (eh.key !== 'top' && eh.key !== 'bottom') {
-                alert('Farmhouse sink must be placed on the TOP or BOTTOM edge of a rectangle.');
+            if (isHoriz) {
+                if (eh.s.w < fsWpx + 1) { alert(`Edge is too short. Need at least ${FS_WIDTH_IN}" of length.`); return; }
+                if (eh.s.h < fsDpx + 1) { alert(`Piece is too shallow. Need at least ${FS_DEPTH_IN}" of depth.`); return; }
+                const halfW = fsWpx / 2;
+                let cx = p.x - eh.s.x;
+                cx = Math.max(halfW, Math.min(eh.s.w - halfW, cx));
+                pushUndo();
+                eh.s.farmSink = { edge: eh.key, cx };
+                ensureFsHalves(eh.s, eh.key);
+                persist(); render(); setTool('select');
                 return;
             }
-            if (eh.s.w < fsWpx + 1) {
-                alert(`Edge is too short. Need at least ${FS_WIDTH_IN}" of width.`);
-                return;
-            }
-            if (eh.s.h < fsDpx + 1) {
-                alert(`Piece is too shallow. Need at least ${FS_DEPTH_IN}" of depth.`);
-                return;
-            }
+            // Vertical (left or right)
+            if (eh.s.h < fsWpx + 1) { alert(`Edge is too short. Need at least ${FS_WIDTH_IN}" of length.`); return; }
+            if (eh.s.w < fsDpx + 1) { alert(`Piece is too shallow. Need at least ${FS_DEPTH_IN}" of depth.`); return; }
             const halfW = fsWpx / 2;
-            let cx = p.x - eh.s.x;
-            cx = Math.max(halfW, Math.min(eh.s.w - halfW, cx));
+            let cy = p.y - eh.s.y;
+            cy = Math.max(halfW, Math.min(eh.s.h - halfW, cy));
             pushUndo();
-            eh.s.farmSink = { edge: eh.key, cx };
+            // For left/right edges, fs.cx stores the y-position along the edge.
+            eh.s.farmSink = { edge: eh.key, cx: cy };
             ensureFsHalves(eh.s, eh.key);
             persist(); render(); setTool('select');
             return;
         }
-        if (eh.s.shapeType === 'l' || eh.s.shapeType === 'u') {
-            const isHoriz = Math.abs(eh.y1 - eh.y2) < 0.5;
-            if (!isHoriz) {
-                alert('Farmhouse sink must be placed on a HORIZONTAL edge of the shape.');
-                return;
-            }
-            const segLenPx = Math.abs(eh.x2 - eh.x1);
+        // L / U / BSP — all support seg-based placement
+        if (eh.s.shapeType === 'l' || eh.s.shapeType === 'u' || eh.s.shapeType === 'bsp') {
+            const segLenPx = Math.hypot(eh.x2 - eh.x1, eh.y2 - eh.y1);
             if (segLenPx < fsWpx + 1) {
-                alert(`Edge is too short. Need at least ${FS_WIDTH_IN}" of width along this segment.`);
+                alert(`Edge is too short. Need at least ${FS_WIDTH_IN}" of length along this edge.`);
                 return;
             }
-            // Determine interior direction by testing points above/below segment
-            const poly = eh.s.shapeType === 'l' ? lShapePolygon(eh.s) : uShapePolygon(eh.s);
-            const midSegY = eh.y1;
-            const midSegX = (eh.x1 + eh.x2) / 2;
-            const insideBelow = pointInPolygon(midSegX, midSegY + 4, poly);
-            const insideAbove = pointInPolygon(midSegX, midSegY - 4, poly);
-            const dir = insideBelow ? 1 : (insideAbove ? -1 : 1); // 1 = cut down, -1 = cut up
-            // Check depth: ensure cutout stays inside polygon
-            const testDeepY = midSegY + dir * (fsDpx + 2);
-            if (!pointInPolygon(midSegX, testDeepY, poly)) {
-                alert(`Piece is too shallow at this edge. Need at least ${FS_DEPTH_IN}" of interior depth.`);
-                return;
-            }
+            const poly = eh.s.shapeType === 'l' ? lShapePolygon(eh.s)
+                       : eh.s.shapeType === 'u' ? uShapePolygon(eh.s)
+                       : bspPolygon(eh.s);
             const halfW = fsWpx / 2;
-            const segMinX = Math.min(eh.x1, eh.x2);
-            const segMaxX = Math.max(eh.x1, eh.x2);
-            let cxAbs = Math.max(segMinX + halfW, Math.min(segMaxX - halfW, p.x));
-            pushUndo();
-            eh.s.farmSink = {
-                edge: 'seg',
-                segKey: eh.key,
-                cx:    cxAbs - eh.s.x,
-                segY:  midSegY - eh.s.y,
-                segMinX: segMinX - eh.s.x,
-                segMaxX: segMaxX - eh.s.x,
-                dir
-            };
+            if (isHoriz) {
+                const midSegY = eh.y1;
+                const midSegX = (eh.x1 + eh.x2) / 2;
+                const insideBelow = pointInPolygon(midSegX, midSegY + 4, poly);
+                const insideAbove = pointInPolygon(midSegX, midSegY - 4, poly);
+                const dir = insideBelow ? 1 : (insideAbove ? -1 : 1);
+                const testDeepY = midSegY + dir * (fsDpx + 2);
+                if (!pointInPolygon(midSegX, testDeepY, poly)) {
+                    alert(`Piece is too shallow at this edge. Need at least ${FS_DEPTH_IN}" of interior depth.`);
+                    return;
+                }
+                const segMinX = Math.min(eh.x1, eh.x2);
+                const segMaxX = Math.max(eh.x1, eh.x2);
+                let cxAbs = Math.max(segMinX + halfW, Math.min(segMaxX - halfW, p.x));
+                pushUndo();
+                eh.s.farmSink = {
+                    edge: 'seg',
+                    segKey: eh.key,
+                    cx:    cxAbs - eh.s.x,
+                    segY:  midSegY - eh.s.y,
+                    segMinX: segMinX - eh.s.x,
+                    segMaxX: segMaxX - eh.s.x,
+                    dir
+                };
+            } else {
+                // Vertical seg edge
+                const midSegX = eh.x1;
+                const midSegY = (eh.y1 + eh.y2) / 2;
+                const insideRight = pointInPolygon(midSegX + 4, midSegY, poly);
+                const insideLeft  = pointInPolygon(midSegX - 4, midSegY, poly);
+                const dir = insideRight ? 1 : (insideLeft ? -1 : 1);
+                const testDeepX = midSegX + dir * (fsDpx + 2);
+                if (!pointInPolygon(testDeepX, midSegY, poly)) {
+                    alert(`Piece is too shallow at this edge. Need at least ${FS_DEPTH_IN}" of interior depth.`);
+                    return;
+                }
+                const segMinY = Math.min(eh.y1, eh.y2);
+                const segMaxY = Math.max(eh.y1, eh.y2);
+                let cyAbs = Math.max(segMinY + halfW, Math.min(segMaxY - halfW, p.y));
+                pushUndo();
+                // Vertical seg storage: cx is y-along-edge, segY is x-coord of edge.
+                eh.s.farmSink = {
+                    edge: 'seg',
+                    segKey: eh.key,
+                    cx:    cyAbs - eh.s.y,
+                    segY:  midSegX - eh.s.x,
+                    dir
+                };
+            }
             ensureFsHalves(eh.s, eh.key);
             persist(); render(); setTool('select');
             return;
         }
-        alert('Farmhouse sink can only be placed on a rectangle, L-shape, or U-shape.');
+        alert('Farmhouse sink can only be placed on rectangles, L-shapes, U-shapes, or backsplashes.');
         return;
     }
 
@@ -6040,7 +6087,6 @@ function updateStatus() {
 Object.entries(TOOL_BTNS).forEach(([t,id]) => document.getElementById(id).addEventListener('click', () => {
     setTool(t);
     if (t === 'text')   openTextPopup();
-    if (t === 'circle') showCirclePopup();
 }));
 document.getElementById('btn-delete').addEventListener('click', deleteSelected);
 document.getElementById('btn-undo').addEventListener('click', undo);
