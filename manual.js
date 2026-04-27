@@ -14,6 +14,7 @@
    ============================================================================ */
 (function () {
     if (!new URLSearchParams(location.search).has('manual')) return;
+    console.log('[manual] mode active — FAB will appear shortly');
 
     // --------------------------------------------------------------- bootstrap
     const H2C_URL = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
@@ -843,6 +844,8 @@
     // ------------------------------------------------------- main runner
     async function runManual() {
         try {
+            showStatus('Preparing', 'Waiting for app to finish loading…', 1);
+            await waitForApp();
             showStatus('Preparing', 'Loading screenshot library…', 2);
             if (!window.html2canvas) await loadScript(H2C_URL);
             stubPersistence();
@@ -893,12 +896,22 @@
     }
 
     // ------------------------------------------------------- bootstrap chain
-    injectCSS();
-    waitForApp().then(() => {
-        // Hide login overlay if it's still showing — we assume the dev opens
-        // ?manual=1 only after auth has succeeded.
+    // Inject CSS + show the FAB immediately. Don't wait for the app to load —
+    // if the user clicks before the app is ready, runManual() will wait then.
+    function bootstrap() {
+        injectCSS();
+        // Hide the login overlay so the FAB isn't covered (z-index battle).
+        // If the user isn't actually authed yet, the app will reassert it.
         const lo = document.getElementById('login-overlay');
         if (lo) lo.style.display = 'none';
         addFAB();
-    });
+        console.log('[manual] FAB added');
+        // After the app boots, log readiness for debugging.
+        waitForApp().then(() => console.log('[manual] app ready'));
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+        bootstrap();
+    }
 })();
