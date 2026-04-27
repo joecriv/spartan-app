@@ -37,7 +37,16 @@ async function build() {
         .trim();
     fs.writeFileSync(path.join(DIST, 'style.css'), cssMin);
 
-    // 4. Copy index.html as-is
+    // 4. Minify manual.js (manual builder, only runs when ?manual=1)
+    const manSrc = fs.readFileSync(path.join(__dirname, 'manual.js'), 'utf8');
+    const manMin = await minify(manSrc, {
+        compress: { passes: 1 },
+        mangle: { toplevel: false },
+        output: { comments: false }
+    });
+    fs.writeFileSync(path.join(DIST, 'manual.js'), manMin.code);
+
+    // 5. Copy index.html as-is
     fs.copyFileSync(path.join(__dirname, 'index.html'), path.join(DIST, 'index.html'));
 
     // Report sizes
