@@ -1302,11 +1302,16 @@ function handles(s) {
     // movable but not resizable — their dimensions are fixed.
     if (s.parentId != null) return [];
     const { x, y, w, h } = s;
+    // When a piece is small the on-corner handles eat the body click-area,
+    // so users grab a resize handle when they meant to select/move. Push
+    // the handles outward when min(w,h) is below the threshold so the body
+    // stays click-clean.
+    const off = Math.min(w, h) < 50 ? 10 : 0;
     return [
-        { id:'nw', px:x,     py:y,     cur:'nw-resize' }, { id:'n',  px:x+w/2, py:y,     cur:'n-resize'  },
-        { id:'ne', px:x+w,   py:y,     cur:'ne-resize' }, { id:'e',  px:x+w,   py:y+h/2, cur:'e-resize'  },
-        { id:'se', px:x+w,   py:y+h,   cur:'se-resize' }, { id:'s',  px:x+w/2, py:y+h,   cur:'s-resize'  },
-        { id:'sw', px:x,     py:y+h,   cur:'sw-resize' }, { id:'w',  px:x,     py:y+h/2, cur:'w-resize'  },
+        { id:'nw', px:x-off,   py:y-off,   cur:'nw-resize' }, { id:'n',  px:x+w/2, py:y-off,   cur:'n-resize'  },
+        { id:'ne', px:x+w+off, py:y-off,   cur:'ne-resize' }, { id:'e',  px:x+w+off, py:y+h/2, cur:'e-resize'  },
+        { id:'se', px:x+w+off, py:y+h+off, cur:'se-resize' }, { id:'s',  px:x+w/2, py:y+h+off, cur:'s-resize'  },
+        { id:'sw', px:x-off,   py:y+h+off, cur:'sw-resize' }, { id:'w',  px:x-off,   py:y+h/2, cur:'w-resize'  },
     ];
 }
 function hitHandle(s, mx, my) {
