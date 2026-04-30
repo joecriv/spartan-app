@@ -1293,6 +1293,10 @@ function load() {
 // ─────────────────────────────────────────────────────────────
 //  Hit testing
 // ─────────────────────────────────────────────────────────────
+// A piece counts as locked when s.locked !== false. Default for new pieces
+// AND for legacy pieces loaded from quotes saved before this feature is
+// "locked" — users opt in to resizing per-piece via the Lock toolbar button.
+function isLocked(s) { return s && s.locked !== false; }
 function handles(s) {
     if (s.shapeType === 'l') return [];
     if (s.shapeType === 'u') return [];
@@ -1301,17 +1305,13 @@ function handles(s) {
     // Parent-bound child items (sinks, cooktops, outlets, boccis) are
     // movable but not resizable — their dimensions are fixed.
     if (s.parentId != null) return [];
+    if (isLocked(s)) return [];
     const { x, y, w, h } = s;
-    // When a piece is small the on-corner handles eat the body click-area,
-    // so users grab a resize handle when they meant to select/move. Push
-    // the handles outward when min(w,h) is below the threshold so the body
-    // stays click-clean.
-    const off = Math.min(w, h) < 50 ? 10 : 0;
     return [
-        { id:'nw', px:x-off,   py:y-off,   cur:'nw-resize' }, { id:'n',  px:x+w/2, py:y-off,   cur:'n-resize'  },
-        { id:'ne', px:x+w+off, py:y-off,   cur:'ne-resize' }, { id:'e',  px:x+w+off, py:y+h/2, cur:'e-resize'  },
-        { id:'se', px:x+w+off, py:y+h+off, cur:'se-resize' }, { id:'s',  px:x+w/2, py:y+h+off, cur:'s-resize'  },
-        { id:'sw', px:x-off,   py:y+h+off, cur:'sw-resize' }, { id:'w',  px:x-off,   py:y+h/2, cur:'w-resize'  },
+        { id:'nw', px:x,     py:y,     cur:'nw-resize' }, { id:'n',  px:x+w/2, py:y,     cur:'n-resize'  },
+        { id:'ne', px:x+w,   py:y,     cur:'ne-resize' }, { id:'e',  px:x+w,   py:y+h/2, cur:'e-resize'  },
+        { id:'se', px:x+w,   py:y+h,   cur:'se-resize' }, { id:'s',  px:x+w/2, py:y+h,   cur:'s-resize'  },
+        { id:'sw', px:x,     py:y+h,   cur:'sw-resize' }, { id:'w',  px:x,     py:y+h/2, cur:'w-resize'  },
     ];
 }
 function hitHandle(s, mx, my) {
@@ -1744,6 +1744,7 @@ function hitShapeLine(mx, my) {
     for (let i = shapes.length - 1; i >= 0; i--) {
         const s = shapes[i];
         if (s.subtype) continue;
+        if (isLocked(s)) continue;
         if (s.shapeType === 'rect') {
             const edges = [
                 ['top',    s.x,     s.y,       s.x+s.w, s.y    ],
@@ -3576,6 +3577,7 @@ function drawPreview() {
 }
 
 function render() {
+    if (typeof refreshLockBtn === 'function') refreshLockBtn();
     dimLabelRects = [];
     dimClickTargets = [];
     // Grid
@@ -6220,6 +6222,45 @@ Object.entries(TOOL_BTNS).forEach(([t,id]) => document.getElementById(id).addEve
 }));
 document.getElementById('btn-delete').addEventListener('click', deleteSelected);
 document.getElementById('btn-undo').addEventListener('click', undo);
+
+// ── Lock toggle ──────────────────────────────────────────────
+// Per-piece resize lock. New pieces start locked (s.locked === true) so
+// users can't accidentally resize them while moving. The button is
+// disabled when nothing is selected; otherwise it reflects the selected
+// piece's current state and toggles it on click.
+function toggleLockSelected() {
+    const s = byId(selected);
+    if (!s) return;
+    pushUndo();
+    s.locked = !isLocked(s);  // isLocked treats undefined as locked, so this flips correctly
+    persist();
+    refreshLockBtn();
+    render();
+}
+function refreshLockBtn() {
+    const btn = document.getElementById('btn-lock');
+    if (!btn) return;
+    const s = byId(selected);
+    if (!s || s.subtype || s.parentId != null) {
+        btn.textContent = '🔒 Lock';
+        btn.disabled = true;
+        btn.style.opacity = '0.45';
+        btn.classList.remove('active');
+        return;
+    }
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    if (isLocked(s)) {
+        btn.textContent = '🔒 Locked';
+        btn.classList.add('active');
+        btn.title = 'This piece is locked for resizing. Click to unlock.';
+    } else {
+        btn.textContent = '🔓 Unlocked';
+        btn.classList.remove('active');
+        btn.title = 'This piece is unlocked — drag handles or edges to resize. Click to lock.';
+    }
+}
+document.getElementById('btn-lock').addEventListener('click', toggleLockSelected);
 
 // ─────────────────────────────────────────────────────────────
 //  Phase 3 — Right panel form
