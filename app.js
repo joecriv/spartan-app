@@ -1,6 +1,25 @@
 'use strict';
 
 // ─────────────────────────────────────────────────────────────
+//  Auto-fit — shrink the UI on narrow screens (low-res monitors)
+// ─────────────────────────────────────────────────────────────
+// 1500 is the design width. Anything below shrinks the whole app
+// uniformly via document.body.zoom so the toolbar, side panel, and
+// the entire canvas grid stay visible without scrollbars. Browsers
+// handle the zoom natively, so mouse coords and canvas drawing all
+// stay accurate — no other code needs to change.
+(function autoFit() {
+    const TARGET = 1500;
+    function apply() {
+        const z = Math.min(1, window.innerWidth / TARGET);
+        document.body.style.zoom = z;
+    }
+    if (document.body) apply();
+    else document.addEventListener('DOMContentLoaded', apply);
+    window.addEventListener('resize', apply);
+})();
+
+// ─────────────────────────────────────────────────────────────
 //  Clerk auth + Supabase client
 // ─────────────────────────────────────────────────────────────
 let currentUserId = null;   // Set after Clerk sign-in
