@@ -6626,6 +6626,38 @@ document.getElementById('add-mat-btn').addEventListener('click', addMaterial);
 
 // ── Material Database ───────────────────────────────────────
 function saveMatDb() { localStorage.setItem(MATDB_KEY, JSON.stringify(matDb)); scheduleSyncToRemote(); }
+// Migration: legacy matDbs (saved before the Vicostone catalogue was added)
+// don't have any Vicostone entries. Append them once on load so existing
+// users see the brand without resetting their database.
+function appendVicostoneIfMissing() {
+    if (matDb.some(m => m.supplier === 'Vicostone')) return;
+    const P=['Polished'],PH=['Polished','Honed'],PL=['Polished','Leathered'],t23=['2cm','3cm'];
+    let _id = matDbNextId;
+    const mk = (n,f,j) => ({ id:_id++, name:n, supplier:'Vicostone', thicknesses:t23, finishes:f, slabW:j?130:120, slabH:j?65:56, costPerSlab:0 });
+    const rows = [
+        ['Vitoria Regia',PH,1],['Beryl',P,1],['Roxana',P,1],['Cassandra',PH,1],
+        ['Nuvolato',P,1],['Adamello',PH,1],['Esmeralda',PH,1],['Lacus',P,1],
+        ['Grey Monet',PH,1],['Marmoris',PH,1],['Mangata',PH,1],['Costa Nova',P,1],
+        ['Tyrol',PH,1],['Amarcord',PH,1],['Vivalioro',P,1],['Bettoglio',PH,1],
+        ['Alessandria',P,1],['Verdelia',PH,1],['Greylac',PH,1],['Diamante',PH,1],
+        ['Venatino',P,1],['Gan Eden',PH,1],['Cemento',PH,1],['Nero Marquina',PH,1],
+        ['Panda White',P,1],['Arabescato',P,1],['Statuario',PH,1],['White Fusion',P,1],
+        ['Bahia',P,1],['Avorio',P,1],['Splendix',PH,1],['Misterio',PH,1],
+        ['Misterio Gold',PH,1],['Elbert',PH,1],['Volakano',P,1],['Ventisca',PH,1],
+        ['Argento',P,1],['Valley White',PH,1],['Ceres',P,1],['Madreperola',P,1],
+        ['Olympus White',PH,1],['Naxos',PH,1],['Tartufo',P,1],['Grey Savoie',P,1],
+        ['Uliano',PL,1],['Cinza',P,0],['Java Noir',P,0],['Carrara',PH,1],
+        ['Icelake',PH,1],['Serra',P,1],['Cold Spring',P,1],['Blue Savoy',P,0],
+        ['Azul Aran',P,0],['Golden Polaris',P,1],['Polaris',P,1],['Arctic Snow',PH,1],
+        ['Onyx White',P,1],['Milky White',P,1],['Silver White',P,1],['Crystal Ivory',P,0],
+        ['Crystal Ice',P,1],['Castelo',P,1],['Cendre',PH,0],['Crystal Black',P,1],
+        ['Nuray',PH,1],['Deoro',PH,1],['Thasos',P,1],['Santenay',P,1],
+        ['Sparkling Black',P,0],
+    ];
+    rows.forEach(([n,f,j]) => matDb.push(mk(n,f,j)));
+    matDbNextId = _id;
+    saveMatDb();
+}
 function loadMatDb() {
     try {
         // TODO: Supabase — fetch material catalog
@@ -6633,12 +6665,13 @@ function loadMatDb() {
         if (d && Array.isArray(d) && d.length > 100 && Array.isArray(d[0].thicknesses)) {
             matDb = d;
             matDbNextId = matDb.reduce((mx, m) => Math.max(mx, m.id + 1), 1);
+            appendVicostoneIfMissing();
             return;
         }
     } catch(e) {}
     // Seed: full multi-brand stone catalog (350 colours)
     // Shortcuts: P=Polished, M=Matte, t23=2cm+3cm, t123=1.2cm+2cm+3cm, d08=0.8cm+1.2cm+2cm
-    const P=['Polished'],M=['Matte'],t23=['2cm','3cm'],t123=['1.2cm','2cm','3cm'],d08=['0.8cm','1.2cm','2cm'];
+    const P=['Polished'],M=['Matte'],PH=['Polished','Honed'],PL=['Polished','Leathered'],t23=['2cm','3cm'],t123=['1.2cm','2cm','3cm'],d08=['0.8cm','1.2cm','2cm'];
     function cm2in(w,h){return[Math.round(w/2.54),Math.round(h/2.54)];}
     let _id=1;
     function e(n,s,t,f,w,h){return{id:_id++,name:n,supplier:s,thicknesses:t,finishes:f,slabW:w,slabH:h,costPerSlab:0};}
@@ -6737,6 +6770,28 @@ function loadMatDb() {
     'Peppercorn White','Perla White','Portico Cream','Premium Plus White','Smoked Pearl','Snow White',
     'Soapstone Metropolis','Soapstone Mist','SoliTaj','Sparkling Black','Sparkling White','Statuary Classique',
     'Stellar White','TravatTaj'].map(n=>e(n,'MSI',t23,P,126,63)),
+    // ── VICOSTONE (69) — Bretonstone quartz ──
+    // Row: [name, finishes, slabSize] where slabSize 1=Jumbo 130x65, 0=Normal 120x56
+    ...[
+    ['Vitoria Regia',PH,1],['Beryl',P,1],['Roxana',P,1],['Cassandra',PH,1],
+    ['Nuvolato',P,1],['Adamello',PH,1],['Esmeralda',PH,1],['Lacus',P,1],
+    ['Grey Monet',PH,1],['Marmoris',PH,1],['Mangata',PH,1],['Costa Nova',P,1],
+    ['Tyrol',PH,1],['Amarcord',PH,1],['Vivalioro',P,1],['Bettoglio',PH,1],
+    ['Alessandria',P,1],['Verdelia',PH,1],['Greylac',PH,1],['Diamante',PH,1],
+    ['Venatino',P,1],['Gan Eden',PH,1],['Cemento',PH,1],['Nero Marquina',PH,1],
+    ['Panda White',P,1],['Arabescato',P,1],['Statuario',PH,1],['White Fusion',P,1],
+    ['Bahia',P,1],['Avorio',P,1],['Splendix',PH,1],['Misterio',PH,1],
+    ['Misterio Gold',PH,1],['Elbert',PH,1],['Volakano',P,1],['Ventisca',PH,1],
+    ['Argento',P,1],['Valley White',PH,1],['Ceres',P,1],['Madreperola',P,1],
+    ['Olympus White',PH,1],['Naxos',PH,1],['Tartufo',P,1],['Grey Savoie',P,1],
+    ['Uliano',PL,1],['Cinza',P,0],['Java Noir',P,0],['Carrara',PH,1],
+    ['Icelake',PH,1],['Serra',P,1],['Cold Spring',P,1],['Blue Savoy',P,0],
+    ['Azul Aran',P,0],['Golden Polaris',P,1],['Polaris',P,1],['Arctic Snow',PH,1],
+    ['Onyx White',P,1],['Milky White',P,1],['Silver White',P,1],['Crystal Ivory',P,0],
+    ['Crystal Ice',P,1],['Castelo',P,1],['Cendre',PH,0],['Crystal Black',P,1],
+    ['Nuray',PH,1],['Deoro',PH,1],['Thasos',P,1],['Santenay',P,1],
+    ['Sparkling Black',P,0],
+    ].map(([n,f,j])=>e(n,'Vicostone',t23,f,j?130:120,j?65:56)),
     ];
     matDbNextId = _id;
     saveMatDb();
