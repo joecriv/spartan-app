@@ -271,6 +271,9 @@ let measurePt1      = null;   // first picked point during measure tool drag
 let measureHover    = null;   // current hover position while picking pt2
 let selectedMeasure = null;   // id of selected measurement
 let selectedText = null;  // id of selected text item
+let selectedEdgeLabel = null; // { shapeId, edgeKey, segIdx } — selected segment label
+let _currentShapeId  = null; // set before drawShape() so drawSegmentedEdge can read it
+let edgeLabelHits    = [];   // populated during render: { shapeId, edgeKey, segIdx, lx, ly, tw }
 let movingText = false;
 let moveTextStart = null; // { mx, my, ox, oy }
 
@@ -2148,15 +2151,29 @@ function drawSegmentedEdge(gctx, edge, x1, y1, x2, y2, sel, edgeKey) {
         drawBorderSegment(gctx, seg.profile, sx, sy, ex, ey, sel);
         // Label: abbreviation + length
         const def = EDGE_DEFS[seg.profile];
-        if (def?.abbr) {
+        if (def?.abbr && !seg.hideLabel) {
             const mx = (sx+ex)/2, my = (sy+ey)/2;
             const lx = mx + nx * ALOFF, ly = my + ny * ALOFF;
             gctx.save();
             gctx.font = 'bold 8px Raleway,sans-serif';
             gctx.textAlign = 'center'; gctx.textBaseline = 'middle';
-            gctx.lineWidth = 3; gctx.strokeStyle = 'rgba(255,255,255,0.85)';
             const txt = `${def.abbr} ${seg.length}"`;
-            gctx.strokeText(txt, lx, ly); gctx.fillStyle = def.color; gctx.fillText(txt, lx, ly);
+            const tw = gctx.measureText(txt).width;
+            // Register hit area for click detection
+            edgeLabelHits.push({ shapeId: _currentShapeId, edgeKey, segIdx: i, lx, ly, tw });
+            const isLabelSel = selectedEdgeLabel &&
+                selectedEdgeLabel.shapeId === _currentShapeId &&
+                selectedEdgeLabel.edgeKey === edgeKey &&
+                selectedEdgeLabel.segIdx === i;
+            if (isLabelSel) {
+                gctx.fillStyle = 'rgba(176,144,48,0.85)';
+                gctx.fillRect(lx - tw/2 - 3, ly - 6, tw + 6, 12);
+                gctx.fillStyle = '#1a1a1a';
+                gctx.fillText(txt, lx, ly);
+            } else {
+                gctx.lineWidth = 3; gctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                gctx.strokeText(txt, lx, ly); gctx.fillStyle = def.color; gctx.fillText(txt, lx, ly);
+            }
             gctx.restore();
         }
         cursor += segPx;
@@ -3612,10 +3629,11 @@ function render() {
     ctx.restore();
 
     // Draw regular shapes first, then sinks/cooktops/outlets on top
-    shapes.filter(s => !s.subtype).forEach(s => drawShape(s, s.id === selected));
+    edgeLabelHits = [];
+    shapes.filter(s => !s.subtype).forEach(s => { _currentShapeId = s.id; drawShape(s, s.id === selected); });
     shapes.filter(s => !s.subtype).forEach(s => drawJointLines(s));
     shapes.filter(s => !s.subtype).forEach(s => drawPolishUnders(s));
-    shapes.filter(s => s.subtype).forEach(s => drawShape(s, s.id === selected));
+    shapes.filter(s => s.subtype).forEach(s => { _currentShapeId = s.id; drawShape(s, s.id === selected); });
     shapes.filter(s => s.subtype).forEach(s => drawSubtypeRotateHandle(s));
     drawPuPreview();
     // Draw text annotations on top
@@ -5500,6 +5518,22 @@ cv.addEventListener('mousedown', e => {
         selectedPU = null;
     }
 
+    // Edge segment labels — click to select, then Delete to hide
+    {
+        let labelHit = null;
+        for (const h of edgeLabelHits) {
+            if (Math.abs(p.x - h.lx) <= h.tw/2 + 5 && Math.abs(p.y - h.ly) <= 8) {
+                labelHit = h; break;
+            }
+        }
+        if (labelHit) {
+            selectedEdgeLabel = { shapeId: labelHit.shapeId, edgeKey: labelHit.edgeKey, segIdx: labelHit.segIdx };
+            selected = null; selectedJoint = null; selectedText = null; selectedDiag = null; selectedPU = null; selectedMeasure = null;
+            render(); return;
+        }
+        selectedEdgeLabel = null;
+    }
+
     // Measurements: click near dim line to select
     selectedMeasure = null;
     for (const m of measurements) {
@@ -5894,6 +5928,20 @@ document.addEventListener('keydown', e => {
     }
     if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedEdgeLabel && document.activeElement === document.body) {
+            e.preventDefault();
+            const sel = selectedEdgeLabel;
+            const s = byId(sel.shapeId);
+            if (s) {
+                const edgeData = s.edges?.[sel.edgeKey];
+                if (edgeData?.type === 'segmented' && edgeData.segments?.[sel.segIdx]) {
+                    pushUndo();
+                    edgeData.segments[sel.segIdx].hideLabel = true;
+                    selectedEdgeLabel = null; persist(); render();
+                }
+            }
+            return;
+        }
         if (selectedJoint && document.activeElement === document.body) {
             e.preventDefault();
             pushUndo();
@@ -6146,7 +6194,7 @@ const TOOL_BTNS = { draw:'btn-draw', ldraw:'btn-ldraw', udraw:'btn-udraw', bsp:'
 function setTool(t) {
     ghostText = null; // cancel any floating text
     measurePt1 = null; measureHover = null;
-    tool = t; selected = null; selectedJoint = null; selectedMeasure = null;
+    tool = t; selected = null; selectedJoint = null; selectedMeasure = null; selectedEdgeLabel = null;
     drawing = false; moving = false; resizing = false; edgeResizing = null; draggingJoint = false; jointSnapCorner = null;
     hovCorner = null; hovEdge = null; hovCornerEdge = null;
     selectedText = null;
