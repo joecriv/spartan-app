@@ -1276,9 +1276,10 @@ function persist() {
 function persistSlab() {
     try {
         const existing = JSON.parse(localStorage.getItem('spartan_v4') || '{}');
-        existing.slabDefs     = slabDefs;
-        existing.slabPlaced   = slabPlaced;
-        existing._slabNextId  = _slabNextId;
+        existing.slabDefs        = slabDefs;
+        existing.slabPlaced      = slabPlaced;
+        existing._slabNextId     = _slabNextId;
+        existing.slabMatchGroups = slabMatchGroups;
         localStorage.setItem('spartan_v4', JSON.stringify(existing));
         scheduleSyncToRemote();
     } catch(e) { /* storage full or parse error — non-fatal */ }
@@ -1297,6 +1298,7 @@ function load() {
             if (d.slabDefs && d.slabDefs.length) slabDefs = d.slabDefs;
             if (d.slabPlaced) slabPlaced = d.slabPlaced;
             if (d._slabNextId) _slabNextId = d._slabNextId;
+            if (d.slabMatchGroups) slabMatchGroups = d.slabMatchGroups;
             syncPageIn();
             return;
         }
@@ -8863,6 +8865,8 @@ let _slabNextId = 1;
 let slabVeinMode = false;       // true while drawing a vein direction arrow
 let slabVeinTargetIdx = null;   // which slab we're setting vein for
 let slabVeinDrag = null;        // { startMx, startMy, curMx, curMy } during drag
+let slabMatchGroups = {};       // key: slabPieceKey(ref) → 'A'|'B'|'C'|'D'|'E' (match groups)
+const MATCH_GROUP_COLORS = { A:'#e05050', B:'#5080e0', C:'#40b860', D:'#c050c0', E:'#e09030' };
 // ── Slab remnant measure tool ─────────────────────────────────
 let slabRemnantMode = false;          // tool active
 let slabRemnantPoints = [];           // in-progress points (slab-local inches)
@@ -8876,6 +8880,10 @@ let slabTransparent = false; // transparency toggle
 // ── helpers ───────────────────────────────────────────────────────────
 // ref = { pageIdx, shapeIdx, label, wi, hi, shapeType, segIdx (or null) }
 // wi/hi and label are stored directly in the ref so segments work independently.
+
+function slabPieceKey(ref) {
+    return ref.segIdx != null ? `${ref.pageIdx}_${ref.shapeIdx}_${ref.segIdx}` : `${ref.pageIdx}_${ref.shapeIdx}`;
+}
 
 function slabGetPieceWH(ref, rotation) {
     const wi = ref.wi || 0;
@@ -9938,21 +9946,33 @@ function slabRefreshPieceList() {
         div.innerHTML = '<div style="color:#666;font-size:11px;padding:6px">No pieces in quote.</div>';
         return;
     }
-    div.innerHTML = '';
+    // Header
+    div.innerHTML = '<div style="color:#777;font-size:10px;font-weight:700;letter-spacing:.4px;padding:2px 0 4px;border-bottom:1px solid #2a2a2a;margin-bottom:4px">PIECES — click group to assign match pair</div>';
     pieces.forEach(p => {
-        const btn = document.createElement('button');
-        btn.className = 'slab-piece-btn';
+        const key = slabPieceKey(p);
+        const grp = slabMatchGroups[key] || null;
+        const grpColor = grp ? MATCH_GROUP_COLORS[grp] : null;
         const placed = slabPlaced.filter(pl =>
             pl.ref.pageIdx === p.pageIdx && pl.ref.shapeIdx === p.shapeIdx &&
             (p.segIdx == null ? pl.ref.segIdx == null : pl.ref.segIdx === p.segIdx)
         ).length;
         const typeTag = p.segIdx == null && p.shapeType === 'l' ? ' [L]' : p.segIdx == null && p.shapeType === 'u' ? ' [U]' : p.segIdx == null && p.shapeType === 'bsp' ? ' [BSP]' : '';
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:stretch;gap:2px;margin-bottom:2px;';
+
+        // Color strip
+        const strip = document.createElement('div');
+        strip.style.cssText = `width:4px;border-radius:2px;flex-shrink:0;background:${grpColor || '#2a2a2a'};`;
+        row.appendChild(strip);
+
+        // Piece button
+        const btn = document.createElement('button');
+        btn.className = 'slab-piece-btn';
+        btn.style.flex = '1';
         btn.textContent = `${p.label}${typeTag}  ${fmtInches(p.wi)} × ${fmtInches(p.hi)}  [${p.pageLabel}]`;
         btn.title = placed ? 'Already placed — remove from slab to reuse' : 'Click to place on slab';
-        if (placed) {
-            btn.disabled = true;
-            btn.style.cssText += ';text-decoration:line-through;color:rgba(200,60,60,0.85);opacity:0.65;cursor:not-allowed;border-color:#5a1010;';
-        }
+        if (placed) btn.style.cssText += ';text-decoration:line-through;color:rgba(200,60,60,0.85);opacity:0.65;cursor:not-allowed;border-color:#5a1010;';
         btn.addEventListener('click', () => {
             if (placed) return;
             slabPickingPiece = { pageIdx:p.pageIdx, shapeIdx:p.shapeIdx,
@@ -9963,7 +9983,25 @@ function slabRefreshPieceList() {
             btn.style.borderColor = '#b09030';
             slabRender();
         });
-        div.appendChild(btn);
+        row.appendChild(btn);
+
+        // Group cycle button
+        const grpBtn = document.createElement('button');
+        grpBtn.className = 'tool-btn';
+        grpBtn.title = 'Assign match group (click to cycle: None → A → B → C → D → E → None)';
+        grpBtn.style.cssText = `font-size:10px;font-weight:700;padding:0 6px;min-width:28px;flex-shrink:0;background:${grpColor || '#1a1a1a'};color:${grpColor ? '#fff' : '#555'};border-color:${grpColor || '#333'};`;
+        grpBtn.textContent = grp || '—';
+        grpBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            const groups = [null, 'A', 'B', 'C', 'D', 'E'];
+            const cur = slabMatchGroups[key] || null;
+            const next = groups[(groups.indexOf(cur) + 1) % groups.length];
+            if (next === null) delete slabMatchGroups[key]; else slabMatchGroups[key] = next;
+            persistSlab(); slabRefreshPieceList(); slabRender();
+        });
+        row.appendChild(grpBtn);
+
+        div.appendChild(row);
     });
 }
 
@@ -10619,6 +10657,24 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
             ctx.fillText(angleLbl, hx, hy + 16);
             ctx.restore();
         } else {
+            ctx.restore();
+        }
+
+        // ── Match group color badge ──────────────────────────────────────
+        const _gk = slabPieceKey(p.ref);
+        const _grp = slabMatchGroups[_gk];
+        if (_grp && MATCH_GROUP_COLORS[_grp]) {
+            ctx.save();
+            ctx.fillStyle = MATCH_GROUP_COLORS[_grp];
+            ctx.globalAlpha = 0.88;
+            const bw = Math.min(8, pxw * 0.18);
+            ctx.fillRect(px, py, bw, pxh);
+            ctx.globalAlpha = 1;
+            const fs = Math.max(7, Math.min(10, pxh * 0.22));
+            ctx.font = `bold ${fs}px Raleway,sans-serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#fff';
+            ctx.fillText(_grp, px + bw/2, py + pxh/2);
             ctx.restore();
         }
     });
