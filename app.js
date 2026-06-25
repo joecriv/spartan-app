@@ -10143,46 +10143,53 @@ function slabOptimize() {
 
     const makeRef = p => ({ pageIdx: p.pageIdx, shapeIdx: p.shapeIdx, label: p.label, wi: p.wi, hi: p.hi, shapeType: p.shapeType, segIdx: p.segIdx != null ? p.segIdx : null, segPoly: p.segPoly || null });
 
+    // Try to place a list of pieces as one unit into slab si. Returns true on success.
+    function tryPlaceUnit(ps, si) {
+        const cur = cursors[si];
+        if (stackVertical) {
+            const colW = Math.max(...ps.map(p => p.wi)) + SLAB_KERF;
+            const totalH = ps.reduce((s, p) => s + p.hi + SLAB_KERF, 0);
+            if (cur.x + colW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
+            if (cur.x + colW > cur.uw + 0.01 || cur.y + totalH > cur.uh + 0.01) return false;
+            let yy = cur.y;
+            ps.forEach(p => { slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: cur.x, y: yy, rotation: 0 }); yy += p.hi + SLAB_KERF; });
+            cur.rowH = Math.max(cur.rowH, totalH); cur.x += colW;
+        } else {
+            const rowH = Math.max(...ps.map(p => p.hi)) + SLAB_KERF;
+            const totalW = ps.reduce((s, p) => s + p.wi + SLAB_KERF, 0);
+            if (cur.x + totalW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
+            if (cur.x + totalW > cur.uw + 0.01 || cur.y + rowH > cur.uh + 0.01) return false;
+            let xx = cur.x;
+            ps.forEach(p => { slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: xx, y: cur.y, rotation: 0 }); xx += p.wi + SLAB_KERF; });
+            cur.rowH = Math.max(cur.rowH, rowH); cur.x += totalW;
+        }
+        return true;
+    }
+
+    // Place a single piece into the first slab that has room.
+    function placeSingle(p) {
+        for (let si = 0; si < slabDefs.length; si++) { if (tryPlaceUnit([p], si)) return true; }
+        return false;
+    }
+
     let unplaced = 0;
     groups.forEach(grp => {
-        let didPlace = false;
-        for (let si = 0; si < slabDefs.length && !didPlace; si++) {
-            const cur = cursors[si];
-            if (stackVertical) {
-                // Group as a vertical column — all pieces share same X, stacked top-to-bottom
-                const colW = Math.max(...grp.pieces.map(p => p.wi)) + SLAB_KERF;
-                const totalH = grp.pieces.reduce((s, p) => s + p.hi + SLAB_KERF, 0);
-                // Advance to next row if column doesn't fit horizontally
-                if (cur.x + colW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
-                if (cur.x + colW <= cur.uw + 0.01 && cur.y + totalH <= cur.uh + 0.01) {
-                    let yy = cur.y;
-                    grp.pieces.forEach(p => {
-                        slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: cur.x, y: yy, rotation: 0 });
-                        yy += p.hi + SLAB_KERF;
-                    });
-                    cur.rowH = Math.max(cur.rowH, totalH);
-                    cur.x += colW;
-                    didPlace = true;
-                }
-            } else {
-                // Group as a horizontal row — all pieces share same Y, stacked left-to-right
-                const rowH = Math.max(...grp.pieces.map(p => p.hi)) + SLAB_KERF;
-                const totalW = grp.pieces.reduce((s, p) => s + p.wi + SLAB_KERF, 0);
-                // Advance to next row if pieces don't fit horizontally
-                if (cur.x + totalW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
-                if (cur.x + totalW <= cur.uw + 0.01 && cur.y + rowH <= cur.uh + 0.01) {
-                    let xx = cur.x;
-                    grp.pieces.forEach(p => {
-                        slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: xx, y: cur.y, rotation: 0 });
-                        xx += p.wi + SLAB_KERF;
-                    });
-                    cur.rowH = Math.max(cur.rowH, rowH);
-                    cur.x += totalW;
-                    didPlace = true;
-                }
-            }
+        if (grp.pieces.length === 1) {
+            if (!placeSingle(grp.pieces[0])) unplaced++;
+            return;
         }
-        if (!didPlace) unplaced += grp.pieces.length;
+        if (grp.priority === 1) {
+            // MUST MATCH JOINT — try to keep together on one slab
+            let placed = false;
+            for (let si = 0; si < slabDefs.length && !placed; si++) placed = tryPlaceUnit(grp.pieces, si);
+            // If they genuinely won't fit together, place individually so nothing is lost
+            if (!placed) grp.pieces.forEach(p => { if (!placeSingle(p)) unplaced++; });
+        } else {
+            // Match group — try together first, then split freely across slabs
+            let placed = false;
+            for (let si = 0; si < slabDefs.length && !placed; si++) placed = tryPlaceUnit(grp.pieces, si);
+            if (!placed) grp.pieces.forEach(p => { if (!placeSingle(p)) unplaced++; });
+        }
     });
 
     slabRefreshPieceList(); slabRefreshJointList(); slabRender(); persistSlab();
