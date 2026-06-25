@@ -10083,6 +10083,112 @@ function slabRefreshJointList() {
     });
 }
 
+// ── Auto-optimizer ────────────────────────────────────────────────────
+function slabOptimize() {
+    const pieces = slabAllPieces();
+    if (!pieces.length) { alert('No pieces to optimize. Add shapes to the quote first.'); return; }
+    if (!confirm('Auto-Optimize will clear the current slab layout and re-place all pieces using your vein direction, match groups, and joint priorities. Continue?')) return;
+
+    // Determine stacking direction from vein angle
+    // Vein horizontal → stack pieces vertically (columns) so vein flows top-to-bottom across joints
+    // Vein vertical   → stack pieces horizontally (rows)
+    const veinSlab = slabDefs.find(sd => sd.veinAngle != null);
+    let stackVertical = true; // default
+    if (veinSlab) {
+        const a = Math.abs(veinSlab.veinAngle) % 180;
+        stackVertical = (a < 45 || a > 135); // horizontal vein → vertical stacking
+    }
+
+    // ── Build placement groups (ordered by priority) ──────────────────
+    const usedKeys = new Set();
+    const groups = []; // [{ priority, pieces: [ref,...] }]
+
+    // Priority 1: Must Match Joints
+    slabMustMatchJoints.forEach(jm => {
+        const p1 = pieces.find(p => slabPieceKey(p) === jm.key1);
+        const p2 = pieces.find(p => slabPieceKey(p) === jm.key2);
+        if (p1 && p2 && !usedKeys.has(jm.key1) && !usedKeys.has(jm.key2)) {
+            groups.push({ priority: 1, pieces: [p1, p2] });
+            usedKeys.add(jm.key1); usedKeys.add(jm.key2);
+        }
+    });
+
+    // Priority 2: Match groups — collect all pieces per group letter
+    const seen = new Set();
+    Object.entries(slabMatchGroups).forEach(([k, letter]) => {
+        if (seen.has(letter)) return;
+        seen.add(letter);
+        const gPieces = pieces.filter(p => slabMatchGroups[slabPieceKey(p)] === letter && !usedKeys.has(slabPieceKey(p)));
+        if (gPieces.length) {
+            groups.push({ priority: 2, pieces: gPieces });
+            gPieces.forEach(p => usedKeys.add(slabPieceKey(p)));
+        }
+    });
+
+    // Priority 3: Standalone pieces — sorted by area descending (better packing)
+    pieces.filter(p => !usedKeys.has(slabPieceKey(p)))
+          .sort((a, b) => (b.wi * b.hi) - (a.wi * a.hi))
+          .forEach(p => groups.push({ priority: 3, pieces: [p] }));
+
+    // ── Pack groups into slabs ────────────────────────────────────────
+    slabPlaced = [];
+    slabSelected = null;
+
+    // Per-slab cursor state
+    const cursors = slabDefs.map(sd => ({
+        x: 0, y: 0, rowH: 0,
+        uw: sd.w - 2 * sd.deadZone,
+        uh: sd.h - 2 * sd.deadZone
+    }));
+
+    const makeRef = p => ({ pageIdx: p.pageIdx, shapeIdx: p.shapeIdx, label: p.label, wi: p.wi, hi: p.hi, shapeType: p.shapeType, segIdx: p.segIdx != null ? p.segIdx : null, segPoly: p.segPoly || null });
+
+    let unplaced = 0;
+    groups.forEach(grp => {
+        let didPlace = false;
+        for (let si = 0; si < slabDefs.length && !didPlace; si++) {
+            const cur = cursors[si];
+            if (stackVertical) {
+                // Group as a vertical column — all pieces share same X, stacked top-to-bottom
+                const colW = Math.max(...grp.pieces.map(p => p.wi)) + SLAB_KERF;
+                const totalH = grp.pieces.reduce((s, p) => s + p.hi + SLAB_KERF, 0);
+                // Advance to next row if column doesn't fit horizontally
+                if (cur.x + colW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
+                if (cur.x + colW <= cur.uw + 0.01 && cur.y + totalH <= cur.uh + 0.01) {
+                    let yy = cur.y;
+                    grp.pieces.forEach(p => {
+                        slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: cur.x, y: yy, rotation: 0 });
+                        yy += p.hi + SLAB_KERF;
+                    });
+                    cur.rowH = Math.max(cur.rowH, totalH);
+                    cur.x += colW;
+                    didPlace = true;
+                }
+            } else {
+                // Group as a horizontal row — all pieces share same Y, stacked left-to-right
+                const rowH = Math.max(...grp.pieces.map(p => p.hi)) + SLAB_KERF;
+                const totalW = grp.pieces.reduce((s, p) => s + p.wi + SLAB_KERF, 0);
+                // Advance to next row if pieces don't fit horizontally
+                if (cur.x + totalW > cur.uw + 0.01) { cur.y += cur.rowH + SLAB_KERF; cur.x = 0; cur.rowH = 0; }
+                if (cur.x + totalW <= cur.uw + 0.01 && cur.y + rowH <= cur.uh + 0.01) {
+                    let xx = cur.x;
+                    grp.pieces.forEach(p => {
+                        slabPlaced.push({ id: _slabNextId++, slabIdx: si, ref: makeRef(p), x: xx, y: cur.y, rotation: 0 });
+                        xx += p.wi + SLAB_KERF;
+                    });
+                    cur.rowH = Math.max(cur.rowH, rowH);
+                    cur.x += totalW;
+                    didPlace = true;
+                }
+            }
+        }
+        if (!didPlace) unplaced += grp.pieces.length;
+    });
+
+    slabRefreshPieceList(); slabRefreshJointList(); slabRender(); persistSlab();
+    if (unplaced) alert(`⚠ ${unplaced} piece(s) could not fit on any slab. Add more slabs or reduce piece sizes.`);
+}
+
 // ── per-slab dimension rows ───────────────────────────────────────────
 function slabRefreshSlabList() {
     const div = document.getElementById('slab-def-list');
@@ -10206,6 +10312,9 @@ function slabRefreshSlabList() {
         slabTransparent = e.target.checked;
         slabRender();
     });
+    // Auto-optimize
+    const btnOpt = document.getElementById('slab-optimize-btn');
+    if (btnOpt) btnOpt.addEventListener('click', slabOptimize);
 })();
 
 // ── slab canvas rendering ─────────────────────────────────────────────
