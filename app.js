@@ -8860,6 +8860,9 @@ let slabPlaced = [];       // placed piece instances
 let slabSelected = null;   // id of selected placed piece
 let slabPickingPiece = null; // { pageIdx, shapeIdx } — piece being placed
 let _slabNextId = 1;
+let slabVeinMode = false;       // true while drawing a vein direction arrow
+let slabVeinTargetIdx = null;   // which slab we're setting vein for
+let slabVeinDrag = null;        // { startMx, startMy, curMx, curMy } during drag
 // ── Slab remnant measure tool ─────────────────────────────────
 let slabRemnantMode = false;          // tool active
 let slabRemnantPoints = [];           // in-progress points (slab-local inches)
@@ -9973,12 +9976,17 @@ function slabRefreshSlabList() {
         const row = document.createElement('div');
         row.style.cssText = 'background:#1a1a1a;border:1px solid #333333;border-radius:4px;padding:6px 8px;';
         const hasImg = !!sd.bgImage;
+        const veinSet = sd.veinAngle != null;
         row.innerHTML = `
-            <div style="display:flex;align-items:center;margin-bottom:5px;gap:6px">
+            <div style="display:flex;align-items:center;margin-bottom:5px;gap:6px;flex-wrap:wrap">
                 <span style="color:#999999;font-size:11px;font-weight:700;letter-spacing:.3px">Slab ${idx+1}</span>
                 ${hasImg ? `<span style="color:#b09030;font-size:10px;font-weight:700">✦ image</span>
                     <button class="tool-btn danger slab-rm-img" data-idx="${idx}" style="font-size:10px;padding:2px 7px;">✕ img</button>`
                          : `<span style="color:#555;font-size:10px">no image</span>`}
+                <button class="tool-btn slab-setvein-btn" data-idx="${idx}" style="font-size:10px;padding:2px 7px;margin-left:auto;${veinSet ? 'border-color:#e8c040;color:#e8c040;' : ''}">
+                    ↗ ${veinSet ? `Vein ${sd.veinAngle}°` : 'Set Vein'}
+                </button>
+                ${veinSet ? `<button class="tool-btn danger slab-clrvein-btn" data-idx="${idx}" style="font-size:10px;padding:2px 7px;">✕</button>` : ''}
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
                 <div class="fp-field" style="margin:0">
@@ -10009,6 +10017,22 @@ function slabRefreshSlabList() {
     div.querySelectorAll('.slab-rm-img').forEach(el => el.addEventListener('click', () => {
         const i = +el.dataset.idx;
         if (slabDefs[i]) { slabDefs[i].bgImage = null; delete slabBgImgEls[i]; slabRefreshSlabList(); slabRender(); }
+    }));
+    div.querySelectorAll('.slab-setvein-btn').forEach(el => el.addEventListener('click', () => {
+        const i = +el.dataset.idx;
+        slabVeinTargetIdx = i;
+        slabVeinMode = true;
+        slabVeinDrag = null;
+        slabCanvas.style.cursor = 'crosshair';
+        el.style.borderColor = '#e8c040';
+        el.textContent = '↗ Click & drag on slab…';
+    }));
+    div.querySelectorAll('.slab-clrvein-btn').forEach(el => el.addEventListener('click', () => {
+        const i = +el.dataset.idx;
+        if (slabDefs[i]) { delete slabDefs[i].veinAngle; delete slabDefs[i].veinPt1; delete slabDefs[i].veinPt2; }
+        slabVeinMode = false; slabVeinTargetIdx = null; slabVeinDrag = null;
+        slabCanvas.style.cursor = '';
+        slabRefreshSlabList(); slabRender();
     }));
 }
 
@@ -10108,6 +10132,42 @@ function slabRender(bgOverride) {
         slabCtx.font = '12px Raleway,sans-serif';
         slabCtx.fillText('Click on a slab to place piece  (ESC to cancel)', SLAB_PAD, canvasH - 10);
     }
+}
+
+function drawVeinArrow(ctx, x1, y1, x2, y2) {
+    const len = Math.hypot(x2-x1, y2-y1);
+    if (len < 5) return;
+    const angle = Math.atan2(y2-y1, x2-x1);
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    ctx.shadowColor = 'rgba(0,0,0,0.75)';
+    ctx.shadowBlur = 5;
+    // Shaft
+    ctx.strokeStyle = '#e8c040';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    // Arrowhead
+    ctx.fillStyle = '#e8c040';
+    const aLen = 14, aW = 0.38;
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - aLen * Math.cos(angle - aW), y2 - aLen * Math.sin(angle - aW));
+    ctx.lineTo(x2 - aLen * Math.cos(angle + aW), y2 - aLen * Math.sin(angle + aW));
+    ctx.closePath(); ctx.fill();
+    // Origin dot
+    ctx.beginPath(); ctx.arc(x1, y1, 4, 0, Math.PI*2); ctx.fill();
+    // Angle label — offset perpendicular to arrow
+    const nx = -(y2-y1)/len, ny = (x2-x1)/len;
+    const deg = Math.round(angle * 180 / Math.PI);
+    const lx = (x1+x2)/2 + nx * 16, ly = (y1+y2)/2 + ny * 16;
+    ctx.shadowBlur = 0;
+    ctx.font = 'bold 11px Raleway,sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText(`${deg}°`, lx, ly);
+    ctx.fillStyle = '#ffe880'; ctx.fillText(`${deg}°`, lx, ly);
+    ctx.restore();
 }
 
 function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
@@ -10663,6 +10723,17 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
         ctx.fill();
         ctx.restore();
     }
+
+    // ── Vein direction arrow ──────────────────────────────────────────────
+    if (sd.veinPt1 && sd.veinPt2) {
+        drawVeinArrow(ctx,
+            ox + sd.veinPt1[0] * sw, oy + sd.veinPt1[1] * sh,
+            ox + sd.veinPt2[0] * sw, oy + sd.veinPt2[1] * sh);
+    }
+    // Live drag preview
+    if (isLiveCanvas && slabVeinDrag && slabVeinDrag.slabIdx === idx) {
+        drawVeinArrow(ctx, slabVeinDrag.startMx, slabVeinDrag.startMy, slabVeinDrag.curMx, slabVeinDrag.curMy);
+    }
 }
 
 // ── slab canvas mouse interaction ─────────────────────────────────────
@@ -10802,6 +10873,15 @@ if (slabCanvas) {
     slabCanvas.addEventListener('mousedown', e => {
         const { mx, my } = slabCanvasXY(e);
 
+        // Vein direction draw mode
+        if (slabVeinMode) {
+            const L = slabGetLayout()[slabVeinTargetIdx];
+            if (L && mx >= L.ox && mx <= L.ox + L.sw && my >= L.oy && my <= L.oy + L.sh) {
+                slabVeinDrag = { slabIdx: slabVeinTargetIdx, startMx: mx, startMy: my, curMx: mx, curMy: my };
+            }
+            return;
+        }
+
         // Remnant measure mode — click points on empty slab area; click near
         // the first point (or press Enter) to close the polygon.
         if (slabRemnantMode) {
@@ -10919,6 +10999,11 @@ if (slabCanvas) {
     });
 
     slabCanvas.addEventListener('mousemove', e => {
+        if (slabVeinMode && slabVeinDrag) {
+            const { mx, my } = slabCanvasXY(e);
+            slabVeinDrag.curMx = mx; slabVeinDrag.curMy = my;
+            slabRender(); return;
+        }
         if (slabRemnantMode) {
             const { mx, my } = slabCanvasXY(e);
             const L = slabFindLayoutAt(mx, my);
@@ -10967,6 +11052,21 @@ if (slabCanvas) {
     });
 
     slabCanvas.addEventListener('mouseup', () => {
+        if (slabVeinMode && slabVeinDrag) {
+            const L = slabGetLayout()[slabVeinDrag.slabIdx];
+            if (L) {
+                const dx = slabVeinDrag.curMx - slabVeinDrag.startMx;
+                const dy = slabVeinDrag.curMy - slabVeinDrag.startMy;
+                if (Math.hypot(dx, dy) > 10) {
+                    slabDefs[slabVeinDrag.slabIdx].veinAngle = Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
+                    slabDefs[slabVeinDrag.slabIdx].veinPt1 = [(slabVeinDrag.startMx - L.ox) / L.sw, (slabVeinDrag.startMy - L.oy) / L.sh];
+                    slabDefs[slabVeinDrag.slabIdx].veinPt2 = [(slabVeinDrag.curMx  - L.ox) / L.sw, (slabVeinDrag.curMy  - L.oy) / L.sh];
+                }
+            }
+            slabVeinMode = false; slabVeinTargetIdx = null; slabVeinDrag = null;
+            slabCanvas.style.cursor = '';
+            slabRefreshSlabList(); slabRender(); return;
+        }
         if (slabDragState) {
             const p = slabPlaced.find(pl => pl.id === slabDragState.id);
             if (p) {
