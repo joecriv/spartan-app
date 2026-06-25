@@ -1276,10 +1276,12 @@ function persist() {
 function persistSlab() {
     try {
         const existing = JSON.parse(localStorage.getItem('spartan_v4') || '{}');
-        existing.slabDefs        = slabDefs;
-        existing.slabPlaced      = slabPlaced;
-        existing._slabNextId     = _slabNextId;
-        existing.slabMatchGroups = slabMatchGroups;
+        existing.slabDefs            = slabDefs;
+        existing.slabPlaced          = slabPlaced;
+        existing._slabNextId         = _slabNextId;
+        existing.slabMatchGroups     = slabMatchGroups;
+        existing.slabMustMatchJoints = slabMustMatchJoints;
+        existing._slabJointNextId    = _slabJointNextId;
         localStorage.setItem('spartan_v4', JSON.stringify(existing));
         scheduleSyncToRemote();
     } catch(e) { /* storage full or parse error — non-fatal */ }
@@ -1299,6 +1301,8 @@ function load() {
             if (d.slabPlaced) slabPlaced = d.slabPlaced;
             if (d._slabNextId) _slabNextId = d._slabNextId;
             if (d.slabMatchGroups) slabMatchGroups = d.slabMatchGroups;
+            if (d.slabMustMatchJoints) slabMustMatchJoints = d.slabMustMatchJoints;
+            if (d._slabJointNextId) _slabJointNextId = d._slabJointNextId;
             syncPageIn();
             return;
         }
@@ -8136,7 +8140,7 @@ function switchPanelTab(active) {
     const ep = document.getElementById('edge-palette');
     if (tb) tb.style.display = active === 'slab' ? 'none' : '';
     if (ep) ep.style.display = active === 'slab' ? 'none' : (tool === 'edge' ? 'flex' : 'none');
-    if (active === 'slab') { syncPageOut(); slabSyncPlacedRefs(); slabRefreshSlabList(); slabRefreshPieceList(); slabRender(); }
+    if (active === 'slab') { syncPageOut(); slabSyncPlacedRefs(); slabRefreshSlabList(); slabRefreshPieceList(); slabRefreshJointList(); slabRender(); }
     if (active === 'registry') { regRefresh(); }
 }
 document.getElementById('ptab-layout').addEventListener('click',  () => switchPanelTab('layout'));
@@ -8867,6 +8871,10 @@ let slabVeinTargetIdx = null;   // which slab we're setting vein for
 let slabVeinDrag = null;        // { startMx, startMy, curMx, curMy } during drag
 let slabMatchGroups = {};       // key: slabPieceKey(ref) → 'A'|'B'|'C'|'D'|'E' (match groups)
 const MATCH_GROUP_COLORS = { A:'#e05050', B:'#5080e0', C:'#40b860', D:'#c050c0', E:'#e09030' };
+let slabMustMatchJoints = [];   // [{ id, key1, key2 }] — highest-priority joint matches
+let _slabJointNextId = 1;
+let slabJointSelectMode = false; // true while selecting pieces for a new joint pair
+let slabJointPending = null;     // key of first piece selected, waiting for second
 // ── Slab remnant measure tool ─────────────────────────────────
 let slabRemnantMode = false;          // tool active
 let slabRemnantPoints = [];           // in-progress points (slab-local inches)
@@ -9971,9 +9979,26 @@ function slabRefreshPieceList() {
         btn.className = 'slab-piece-btn';
         btn.style.flex = '1';
         btn.textContent = `${p.label}${typeTag}  ${fmtInches(p.wi)} × ${fmtInches(p.hi)}  [${p.pageLabel}]`;
-        btn.title = placed ? 'Already placed — remove from slab to reuse' : 'Click to place on slab';
-        if (placed) btn.style.cssText += ';text-decoration:line-through;color:rgba(200,60,60,0.85);opacity:0.65;cursor:not-allowed;border-color:#5a1010;';
+        const isPending = slabJointSelectMode && slabJointPending === key;
+        const isJointed = slabMustMatchJoints.some(j => j.key1 === key || j.key2 === key);
+        btn.title = slabJointSelectMode ? 'Click to select for joint match' : (placed ? 'Already placed — remove from slab to reuse' : 'Click to place on slab');
+        if (placed && !slabJointSelectMode) btn.style.cssText += ';text-decoration:line-through;color:rgba(200,60,60,0.85);opacity:0.65;cursor:not-allowed;border-color:#5a1010;';
+        if (isPending) btn.style.borderColor = '#e8c040';
+        if (isJointed && !slabJointSelectMode) btn.style.cssText += ';border-style:dashed;';
         btn.addEventListener('click', () => {
+            if (slabJointSelectMode) {
+                if (!slabJointPending) {
+                    slabJointPending = key;
+                    slabRefreshJointList(); slabRefreshPieceList(); return;
+                }
+                if (slabJointPending !== key) {
+                    const already = slabMustMatchJoints.some(j => (j.key1 === slabJointPending && j.key2 === key) || (j.key1 === key && j.key2 === slabJointPending));
+                    if (!already) slabMustMatchJoints.push({ id: _slabJointNextId++, key1: slabJointPending, key2: key });
+                    persistSlab();
+                }
+                slabJointSelectMode = false; slabJointPending = null;
+                slabRefreshJointList(); slabRefreshPieceList(); slabRender(); return;
+            }
             if (placed) return;
             slabPickingPiece = { pageIdx:p.pageIdx, shapeIdx:p.shapeIdx,
                 label:p.label, wi:p.wi, hi:p.hi, shapeType:p.shapeType,
@@ -10002,6 +10027,59 @@ function slabRefreshPieceList() {
         row.appendChild(grpBtn);
 
         div.appendChild(row);
+    });
+}
+
+// ── Must Match Joint section ──────────────────────────────────────────
+function slabRefreshJointList() {
+    const sec = document.getElementById('slab-joint-section');
+    if (!sec) return;
+    const pieces = slabAllPieces();
+    const pieceMap = {};
+    pieces.forEach(p => { pieceMap[slabPieceKey(p)] = p; });
+
+    sec.innerHTML = `<div style="color:#777;font-size:10px;font-weight:700;letter-spacing:.4px;padding:2px 0 4px;">MUST MATCH JOINTS</div>`;
+
+    if (slabJointSelectMode) {
+        const status = document.createElement('div');
+        status.style.cssText = 'color:#e8c040;font-size:10px;background:#1a1500;border:1px solid #4a3800;border-radius:3px;padding:4px 6px;margin-bottom:4px;';
+        status.textContent = slabJointPending ? '✓ First piece selected — click second piece in list above' : 'Click first piece in list above…';
+        sec.appendChild(status);
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'tool-btn danger';
+        cancelBtn.style.cssText = 'font-size:10px;padding:2px 8px;margin-bottom:6px;';
+        cancelBtn.textContent = '✕ Cancel';
+        cancelBtn.addEventListener('click', () => { slabJointSelectMode = false; slabJointPending = null; slabRefreshJointList(); slabRefreshPieceList(); });
+        sec.appendChild(cancelBtn);
+    } else {
+        const addBtn = document.createElement('button');
+        addBtn.className = 'tool-btn';
+        addBtn.style.cssText = 'font-size:10px;padding:2px 8px;margin-bottom:6px;border-color:#e8c040;color:#e8c040;';
+        addBtn.textContent = '⋈ Add Joint Match';
+        addBtn.addEventListener('click', () => { slabJointSelectMode = true; slabJointPending = null; slabRefreshJointList(); slabRefreshPieceList(); });
+        sec.appendChild(addBtn);
+    }
+
+    if (slabMustMatchJoints.length === 0 && !slabJointSelectMode) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'color:#555;font-size:10px;padding:2px 0;';
+        empty.textContent = 'No joint matches set.';
+        sec.appendChild(empty);
+    }
+
+    slabMustMatchJoints.forEach(jm => {
+        const p1 = pieceMap[jm.key1], p2 = pieceMap[jm.key2];
+        const lbl1 = p1 ? p1.label : '?', lbl2 = p2 ? p2.label : '?';
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:4px;background:#1a1500;border:1px solid #4a3800;border-radius:3px;padding:3px 6px;margin-bottom:3px;';
+        row.innerHTML = `<span style="color:#e8c040;font-size:11px;font-weight:700">⋈</span><span style="color:#ccc;font-size:10px;flex:1">${lbl1} ↔ ${lbl2}</span>`;
+        const rm = document.createElement('button');
+        rm.className = 'tool-btn danger';
+        rm.style.cssText = 'font-size:9px;padding:1px 5px;';
+        rm.textContent = '✕';
+        rm.addEventListener('click', () => { slabMustMatchJoints = slabMustMatchJoints.filter(j => j.id !== jm.id); persistSlab(); slabRefreshJointList(); slabRender(); });
+        row.appendChild(rm);
+        sec.appendChild(row);
     });
 }
 
@@ -10675,6 +10753,31 @@ function slabDrawSlab(ctx, sd, idx, ox, oy, sc, mockupMode) {
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillStyle = '#fff';
             ctx.fillText(_grp, px + bw/2, py + pxh/2);
+            ctx.restore();
+        }
+
+        // ── Must Match Joint indicator ───────────────────────────────────
+        const _jMatch = slabMustMatchJoints.find(j => j.key1 === _gk || j.key2 === _gk);
+        if (_jMatch) {
+            ctx.save();
+            // Gold diagonal stripe along the top edge
+            const bh = Math.min(8, pxh * 0.18);
+            ctx.fillStyle = '#e8c040';
+            ctx.globalAlpha = 0.9;
+            ctx.fillRect(px, py, pxw, bh);
+            // Diagonal hatch over stripe
+            ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 1;
+            for (let d = -bh; d < pxw + bh; d += 6) {
+                ctx.beginPath(); ctx.moveTo(px + d, py); ctx.lineTo(px + d + bh, py + bh); ctx.stroke();
+            }
+            // ⋈ label
+            const fs2 = Math.max(7, Math.min(10, bh * 0.85));
+            ctx.font = `bold ${fs2}px Raleway,sans-serif`;
+            ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillText('⋈', px + pxw - 2, py + 1);
             ctx.restore();
         }
     });
