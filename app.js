@@ -6461,7 +6461,15 @@ function matHtml(m) {
     const selFinish = m.finish || (availFinishes[0]||'');
     const selThick = m.thickness || (availThick[availThick.length-1]||'');
     const slabStr = linked ? `${linked.slabW||'?'}" × ${linked.slabH||'?'}"` : '';
-    const costStr = linked ? `Cost/slab: ${linked.costPerSlab ? fmt$(linked.costPerSlab) : 'not set'}` : '';
+    const costStr = linked ? (() => {
+        const vc = linked.variantCosts;
+        if (vc && Object.keys(vc).some(k => vc[k] > 0)) {
+            const vals = Object.values(vc).filter(v => v > 0);
+            const mn = Math.min(...vals), mx = Math.max(...vals);
+            return `Cost/slab: ${mn === mx ? fmt$(mn) : fmt$(mn) + '–' + fmt$(mx)}`;
+        }
+        return linked.costPerSlab ? `Cost/slab: ${fmt$(linked.costPerSlab)}` : 'Cost/slab: not set';
+    })() : '';
 
     const selType = (m.type === 'option' || m.type === 'page') ? m.type : 'page';
     const optionPlaceholder = `Option ${getOptionLetter(m)} (editable)`;
@@ -7186,7 +7194,13 @@ function getMatCostPerSlab(matId) {
     const m = formData.materials.find(m => m.id === matId);
     if (!m || !m.dbId) return 0;
     const db = matDb.find(d => d.id === m.dbId);
-    return db ? (parseFloat(db.costPerSlab) || 0) : 0;
+    if (!db) return 0;
+    if (db.variantCosts) {
+        const key = `${m.thickness||''}|${m.finish||''}`;
+        const vc = db.variantCosts[key];
+        if (vc > 0) return vc;
+    }
+    return parseFloat(db.costPerSlab) || 0;
 }
 function getMatSlabSqft(matId) {
     const m = formData.materials.find(m => m.id === matId);
@@ -7640,32 +7654,70 @@ function renderCostsPanel() {
             priceContainer.innerHTML = '<p class="price-internal-note">' + (matDb.length ? 'No materials match this brand.' : 'No materials in database. Add materials below first.') + '</p>';
         } else {
             priceContainer.innerHTML = filtered.map(m => {
-                const slabSqft = (m.slabW && m.slabH) ? ((m.slabW * m.slabH) / 144).toFixed(1) : '?';
-                const perSqft = (m.costPerSlab && m.slabW && m.slabH) ? fmt$((m.costPerSlab / ((m.slabW * m.slabH) / 144))) : '—';
-                return `<div style="display:flex;align-items:center;gap:6px;padding:6px 4px;border-bottom:1px solid #333">
-                    <div style="flex:1;min-width:0">
-                        <div style="color:#e0ddd5;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.name||'Unnamed'}</div>
-                        <div style="color:#777;font-size:9px">${m.supplier||''} · ${(m.thicknesses||[]).join(', ')} · ${(m.finishes||[]).join(', ')} · ${m.slabW||'?'}"×${m.slabH||'?'}" (${slabSqft} sqft)</div>
+                const sqft = (m.slabW && m.slabH) ? (m.slabW * m.slabH) / 144 : 0;
+                const slabSqft = sqft ? sqft.toFixed(1) : '?';
+                const ths = (m.thicknesses && m.thicknesses.length) ? m.thicknesses : [''];
+                const fns = (m.finishes    && m.finishes.length)    ? m.finishes    : [''];
+                const combos = [];
+                for (const t of ths) for (const f of fns) combos.push({ t, f, key: `${t}|${f}` });
+                const vc = m.variantCosts || {};
+
+                if (combos.length === 1) {
+                    const c = combos[0];
+                    const cost = vc[c.key] || parseFloat(m.costPerSlab) || 0;
+                    const pSqft = (cost && sqft) ? fmt$(cost / sqft) + '/sqft' : '—/sqft';
+                    const subLbl = [c.t, c.f, `${m.slabW||'?'}"×${m.slabH||'?'}"`, `(${slabSqft} sqft)`].filter(Boolean).join(' · ');
+                    return `<div style="display:flex;align-items:center;gap:6px;padding:6px 4px;border-bottom:1px solid #333">
+                        <div style="flex:1;min-width:0">
+                            <div style="color:#e0ddd5;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.name||'Unnamed'}</div>
+                            <div style="color:#777;font-size:9px">${m.supplier ? m.supplier + ' · ' : ''}${subLbl}</div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                            <span style="color:#888;font-size:10px">$/slab</span>
+                            <input class="mat-input cost-slab-inp" data-dbid="${m.id}" data-vkey="${c.key}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${cost||''}" placeholder="0">
+                        </div>
+                        <div class="cost-sqft-lbl" data-dbid="${m.id}" data-vkey="${c.key}" style="color:#999;font-size:9px;width:55px;text-align:right;flex-shrink:0">${pSqft}</div>
+                    </div>`;
+                }
+
+                const varRows = combos.map(c => {
+                    const cost = vc[c.key] || 0;
+                    const pSqft = (cost && sqft) ? fmt$(cost / sqft) + '/sqft' : '—/sqft';
+                    const lbl = [c.t, c.f].filter(Boolean).join(' / ');
+                    return `<div style="display:flex;align-items:center;gap:6px;padding:2px 4px 2px 10px">
+                        <div style="color:#999;font-size:10px;min-width:110px">${lbl}</div>
+                        <div style="flex:1"></div>
+                        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                            <span style="color:#666;font-size:9px">$/slab</span>
+                            <input class="mat-input cost-slab-inp" data-dbid="${m.id}" data-vkey="${c.key}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${cost||''}" placeholder="0">
+                        </div>
+                        <div class="cost-sqft-lbl" data-dbid="${m.id}" data-vkey="${c.key}" style="color:#666;font-size:9px;width:55px;text-align:right;flex-shrink:0">${pSqft}</div>
+                    </div>`;
+                }).join('');
+
+                return `<div style="border-bottom:1px solid #333;padding:5px 4px">
+                    <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px">
+                        <div style="color:#e0ddd5;font-size:11px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.name||'Unnamed'}</div>
+                        <div style="color:#666;font-size:9px;flex-shrink:0;white-space:nowrap">${m.supplier ? m.supplier + ' · ' : ''}${m.slabW||'?'}"×${m.slabH||'?'}" (${slabSqft} sqft)</div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-                        <span style="color:#888;font-size:10px">$/slab</span>
-                        <input class="mat-input cost-slab-inp" data-dbid="${m.id}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${m.costPerSlab||''}" placeholder="0">
-                    </div>
-                    <div class="cost-sqft-lbl" data-dbid="${m.id}" style="color:#999;font-size:9px;width:55px;text-align:right;flex-shrink:0">${perSqft}/sqft</div>
+                    ${varRows}
                 </div>`;
             }).join('');
             priceContainer.querySelectorAll('.cost-slab-inp').forEach(inp => inp.addEventListener('input', e => {
                 const db = matDb.find(m => m.id === +e.target.dataset.dbid);
-                if (db) {
-                    db.costPerSlab = parseFloat(e.target.value) || 0;
-                    saveMatDb();
-                    // Update just the $/sqft label
-                    const lbl = priceContainer.querySelector(`.cost-sqft-lbl[data-dbid="${db.id}"]`);
-                    if (lbl) {
-                        const ss = (db.slabW && db.slabH) ? (db.slabW * db.slabH) / 144 : 0;
-                        lbl.textContent = (db.costPerSlab && ss > 0) ? fmt$(db.costPerSlab / ss) + '/sqft' : '—/sqft';
-                    }
+                if (!db) return;
+                const vkey = e.target.dataset.vkey;
+                const val = parseFloat(e.target.value) || 0;
+                if (vkey) {
+                    if (!db.variantCosts) db.variantCosts = {};
+                    db.variantCosts[vkey] = val;
+                } else {
+                    db.costPerSlab = val;
                 }
+                saveMatDb();
+                const ss = (db.slabW && db.slabH) ? (db.slabW * db.slabH) / 144 : 0;
+                const lbl = priceContainer.querySelector(`.cost-sqft-lbl[data-dbid="${db.id}"][data-vkey="${vkey}"]`);
+                if (lbl) lbl.textContent = (val && ss > 0) ? fmt$(val / ss) + '/sqft' : '—/sqft';
             }));
         }
     }
