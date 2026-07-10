@@ -7817,7 +7817,8 @@ function renderPricingPanel() {
                          (mat.notes||'').toLowerCase().includes('dekton');
         const dbCostPerSlab = getMatCostPerSlab(+mid);
         const slabSqft = getMatSlabSqft(+mid);
-        const suggestedQty = slabSqft > 0 ? Math.ceil(msqft / slabSqft) : 1;
+        const layoutQty = slabsUsedInLayout((mat.type||'page') === 'option' ? null : mat.pageId);
+        const suggestedQty = layoutQty > 0 ? layoutQty : (slabSqft > 0 ? Math.ceil(msqft / slabSqft) : 1);
         const ov = pricingData.slabOverrides[mid] || {};
         const slabQty = ov.qty != null ? ov.qty : suggestedQty;
         const hasDbPrice = dbCostPerSlab > 0;
@@ -7829,7 +7830,7 @@ function renderPricingPanel() {
         const matSubtotal = slabCost + cuttingCost;
         const html = `<div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px 8px;margin-bottom:4px">
             <div style="font-size:11px;font-weight:700;color:#e0ddd5;margin-bottom:4px">${matName}${isDekton ? ' <span style="color:#e0a050;font-weight:500;font-size:9px">(Dekton)</span>' : ''}</div>
-            <div style="font-size:9px;color:#888;margin-bottom:4px">${msqft.toFixed(2)} sqft total · suggested ${suggestedQty} slab${suggestedQty!==1?'s':''}</div>
+            <div style="font-size:9px;color:#888;margin-bottom:4px">${msqft.toFixed(2)} sqft total · ${layoutQty>0?'layout':'suggested'} ${suggestedQty} slab${suggestedQty!==1?'s':''}</div>
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
                 <span style="font-size:10px;color:#999;min-width:50px">Qty slabs</span>
                 <input class="mat-input pricing-slab-qty" data-mid="${mid}" type="text" inputmode="numeric" value="${slabQty}" style="width:60px;text-align:right">
@@ -8921,6 +8922,22 @@ document.getElementById('reg-new-btn').addEventListener('click', async () => {
 
 let slabDefs = [{ w: 126, h: 63, deadZone: 0.5 }]; // default one 10.5' x 5.25' slab
 let slabPlaced = [];       // placed piece instances
+
+// Number of slabs in the Layout tab holding at least one placed piece.
+// pageId: count only slabs holding pieces from that canvas page; null/undefined = all slabs.
+function slabsUsedInLayout(pageId) {
+    const used = new Set();
+    for (const p of slabPlaced) {
+        if (!slabDefs[p.slabIdx]) continue;
+        if (pageId != null) {
+            const pg = p.ref ? pages[p.ref.pageIdx] : null;
+            if (!pg || pg.id !== pageId) continue;
+        }
+        used.add(p.slabIdx);
+    }
+    return used.size;
+}
+
 let slabSelected = null;   // id of selected placed piece
 let slabPickingPiece = null; // { pageIdx, shapeIdx } — piece being placed
 let _slabNextId = 1;
@@ -11642,7 +11659,8 @@ function calcPagePricing(page) {
                 || (pageMat.thickness||'').toLowerCase().includes('dekton');
         const dbCostPerSlab = getMatCostPerSlab(pageMat.id);
         const slabSqft = getMatSlabSqft(pageMat.id);
-        const suggestedQty = slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1;
+        const layoutQty = slabsUsedInLayout(page.id);
+        const suggestedQty = layoutQty > 0 ? layoutQty : (slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1);
         const ov = (pricingData.slabOverrides||{})[pageMat.id] || {};
         const slabQty = ov.qty != null ? ov.qty : suggestedQty;
         const useCustom = ov.customPrice != null && ov.customPrice >= 0;
@@ -11729,7 +11747,8 @@ function calcPageOptions(page) {
         // Slab-based material cost (matches buildMatBlock in renderPricingPanel)
         const dbCostPerSlab = getMatCostPerSlab(mat.id);
         const slabSqft = getMatSlabSqft(mat.id);
-        const suggestedQty = slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1;
+        const layoutQty = slabsUsedInLayout(page.id);
+        const suggestedQty = layoutQty > 0 ? layoutQty : (slabSqft > 0 ? Math.ceil(roomSqft / slabSqft) : 1);
         const ov = (pricingData.slabOverrides||{})[mat.id] || {};
         const slabQty = ov.qty != null ? ov.qty : suggestedQty;
         const useCustom = ov.customPrice != null && ov.customPrice >= 0;
@@ -11900,7 +11919,8 @@ function calcOptionsSummary() {
                          (pageMat.thickness||'').toLowerCase().includes('dekton');
         const dbCostPerSlab = getMatCostPerSlab(pageMat.id);
         const slabSqft = getMatSlabSqft(pageMat.id);
-        const suggestedQty = slabSqft > 0 ? Math.ceil(pSqft / slabSqft) : 1;
+        const layoutQty = slabsUsedInLayout(page.id);
+        const suggestedQty = layoutQty > 0 ? layoutQty : (slabSqft > 0 ? Math.ceil(pSqft / slabSqft) : 1);
         const ov = (pricingData.slabOverrides||{})[pageMat.id] || {};
         const slabQty = ov.qty != null ? ov.qty : suggestedQty;
         const useCustom = ov.customPrice != null && ov.customPrice >= 0;
@@ -11924,7 +11944,8 @@ function calcOptionsSummary() {
         // Slab cost: prefer user overrides; else derive from DB slab size
         const dbCostPerSlab = getMatCostPerSlab(mat.id);
         const slabSqft = getMatSlabSqft(mat.id);
-        const suggestedQty = slabSqft > 0 ? Math.ceil(totalSqft / slabSqft) : 1;
+        const layoutQty = slabsUsedInLayout(null);
+        const suggestedQty = layoutQty > 0 ? layoutQty : (slabSqft > 0 ? Math.ceil(totalSqft / slabSqft) : 1);
         const ov = (pricingData.slabOverrides||{})[mat.id] || {};
         const slabQty = ov.qty != null ? ov.qty : suggestedQty;
         const useCustom = ov.customPrice != null && ov.customPrice >= 0;
