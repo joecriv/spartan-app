@@ -7299,6 +7299,7 @@ function calcTotalSqft() {
                 if (s.shapeType === 'l') area -= (s.notchW || 0) * (s.notchH || 0);
                 if (s.shapeType === 'u') area = uShapeAreaPx(s);
                 if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
+                if (s.shapeType === 'bsp') area = s.w * s.h - (s.w - (s.pW||0)) * (s.pH||0);
                 if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
                 area -= totalCheckAreaPx(s);
                 total += area;
@@ -7570,6 +7571,7 @@ function calcServiceQtys() {
             if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
             if (s.shapeType === 'u') area = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area = Math.PI * (s.w/2) * (s.h/2);
+            if (s.shapeType === 'bsp') area = s.w * s.h - (s.w - (s.pW||0)) * (s.pH||0);
             if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
             area -= totalCheckAreaPx(s);
             const sqft = area / SQFT_PX2;
@@ -7783,6 +7785,7 @@ function renderPricingPanel() {
             if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
             if (s.shapeType === 'u') area = uShapeAreaPx(s);
             if (s.shapeType === 'circle') area = Math.PI * (s.w/2) * (s.h/2);
+            if (s.shapeType === 'bsp') area = s.w * s.h - (s.w - (s.pW||0)) * (s.pH||0);
             if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
             area -= totalCheckAreaPx(s);
             pageSqft += area / SQFT_PX2;
@@ -11520,6 +11523,7 @@ function calcPageSqft(page) {
         if (s.shapeType === 'l') area -= (s.notchW||0) * (s.notchH||0);
         if (s.shapeType === 'u') area = uShapeAreaPx(s);
         if (s.shapeType === 'circle') area = Math.PI * (s.w / 2) * (s.h / 2);
+        if (s.shapeType === 'bsp') area = s.w * s.h - (s.w - (s.pW||0)) * (s.pH||0);
         if (s.farmSink) area -= (FS_WIDTH_IN * INCH) * (FS_DEPTH_IN * INCH);
         area -= totalCheckAreaPx(s);
         total += area;
