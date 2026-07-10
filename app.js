@@ -11117,7 +11117,12 @@ function slabPointOverPiece(slabIdx, x, y) {
     for (const p of slabPlaced) {
         if (p.slabIdx !== slabIdx) continue;
         const { w: pw, h: ph } = slabGetPieceWH(p.ref, p.rotation||0);
-        if (x >= p.x && x <= p.x + pw && y >= p.y && y <= p.y + ph) return true;
+        if (x < p.x || x > p.x + pw || y < p.y || y > p.y + ph) continue;
+        // Exact outline test — the empty space inside the bounding box of an
+        // L / U / backsplash piece (notches, gaps) stays clickable for remnants.
+        const poly = piecePolyInches(p.x, p.y, p.ref, p.rotation||0);
+        if (!poly || poly.length < 3) return true;
+        if (_ptInPoly([x, y], poly)) return true;
     }
     return false;
 }
