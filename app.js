@@ -2398,7 +2398,6 @@ function dimRectsOverlap(a, b) {
 // (x1,y1)→(x2,y2) must be a CW-wound segment so outward normal = (ty,-tx).
 // lenPx is the raw pixel distance to show as an inch value.
 function drawDimLine(x1, y1, x2, y2, lenPx, shapeId, dimKey) {
-    if (proposalShapeOnly) return;
     const dx = x2-x1, dy = y2-y1, len = Math.hypot(dx, dy);
     if (len < INCH) return;
     // Check if this dim is hidden
@@ -12095,7 +12094,7 @@ function generateProposal() {
             x1 = Math.max(x1, s.x + s.w); y1 = Math.max(y1, s.y + s.h);
         }
         if (!isFinite(x0)) return { dataURL: cv.toDataURL('image/png'), w: cv.width, h: cv.height };
-        const pad = 20; // tight padding — no dimension arrows to clear
+        const pad = 70; // clearance for dimension arrows + labels
         const cx  = Math.max(0, Math.floor(x0 - pad));
         const cy  = Math.max(0, Math.floor(y0 - pad));
         const cx2 = Math.min(cv.width,  Math.ceil(x1 + pad));
