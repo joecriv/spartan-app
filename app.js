@@ -12088,17 +12088,77 @@ function generateProposal() {
         return h;
     }
 
+    // Temporarily pack pieces close together so the proposal drawing stays
+    // large and legible even when pieces are spread across the canvas.
+    // Returns a restore function (or null when no packing is needed).
+    function compactPieces() {
+        const pieceList = shapes.filter(s => !s.subtype);
+        if (pieceList.length < 2) return null;
+        const saved = shapes.map(s => ({ s, x: s.x, y: s.y }));
+        const GAP = INCH * 30; // room between pieces for dimension labels
+        let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+        for (const s of pieceList) {
+            bx0 = Math.min(bx0, s.x); by0 = Math.min(by0, s.y);
+            bx1 = Math.max(bx1, s.x + s.w); by1 = Math.max(by1, s.y + s.h);
+        }
+        // Attach freestanding items (no parentId) to the piece under their center
+        const hostOf = new Map();
+        for (const c of shapes) {
+            if (!c.subtype || c.parentId != null) continue;
+            const ccx = c.x + c.w / 2, ccy = c.y + c.h / 2;
+            const host = pieceList.find(p => ccx >= p.x && ccx <= p.x + p.w && ccy >= p.y && ccy <= p.y + p.h);
+            if (host) hostOf.set(c.id, host.id);
+        }
+        // Shelf-pack, tallest first, wrapping to roughly match the image zone aspect
+        const order = pieceList.slice().sort((a, b) => b.h - a.h);
+        const totalArea = order.reduce((t, s) => t + (s.w + GAP) * (s.h + GAP), 0);
+        const rowMaxW = Math.max(Math.max(...order.map(s => s.w)), Math.sqrt(totalArea * 2.3));
+        let rx = 0, ry = 0, rowH = 0, packW = 0, packH = 0;
+        const target = new Map();
+        for (const s of order) {
+            if (rx > 0 && rx + s.w > rowMaxW) { rx = 0; ry += rowH + GAP; rowH = 0; }
+            target.set(s.id, { x: rx, y: ry });
+            rx += s.w + GAP;
+            rowH = Math.max(rowH, s.h);
+            packW = Math.max(packW, rx - GAP);
+            packH = ry + rowH;
+        }
+        // Keep the user's own arrangement when it is already nearly as tight
+        if (packW * packH >= (bx1 - bx0) * (by1 - by0) * 0.8) return null;
+        const M = 110; // margin so dimension labels stay on the canvas
+        const ax = Math.max(M, Math.min(bx0, CW - packW - M));
+        const ay = Math.max(M, Math.min(by0, CH - packH - M));
+        const deltaOf = new Map();
+        for (const s of order) {
+            const t = target.get(s.id);
+            const dx = ax + t.x - s.x, dy = ay + t.y - s.y;
+            deltaOf.set(s.id, { dx, dy });
+            s.x += dx; s.y += dy;
+        }
+        for (const c of shapes) {
+            if (!c.subtype) continue;
+            const hostId = c.parentId != null ? c.parentId : hostOf.get(c.id);
+            const d = hostId != null ? deltaOf.get(hostId) : null;
+            if (d) { c.x += d.dx; c.y += d.dy; }
+        }
+        return () => { for (const r of saved) { r.s.x = r.x; r.s.y = r.y; } };
+    }
+
     // Crop canvas to shape bounding box — proposal mode: shapes only, no grid/dims
     function croppedCanvasData(page) {
+        const restore = compactPieces();
         proposalShapeOnly = true;
         render();
         proposalShapeOnly = false;
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const s of page.shapes) {
+        for (const s of shapes) {
             x0 = Math.min(x0, s.x); y0 = Math.min(y0, s.y);
             x1 = Math.max(x1, s.x + s.w); y1 = Math.max(y1, s.y + s.h);
         }
-        if (!isFinite(x0)) return { dataURL: cv.toDataURL('image/png'), w: cv.width, h: cv.height };
+        if (!isFinite(x0)) {
+            if (restore) restore();
+            return { dataURL: cv.toDataURL('image/png'), w: cv.width, h: cv.height };
+        }
         const pad = 70; // clearance for dimension arrows + labels
         const cx  = Math.max(0, Math.floor(x0 - pad));
         const cy  = Math.max(0, Math.floor(y0 - pad));
@@ -12108,6 +12168,7 @@ function generateProposal() {
         const tmp = document.createElement('canvas');
         tmp.width = cw; tmp.height = ch;
         tmp.getContext('2d').drawImage(cv, cx, cy, cw, ch, 0, 0, cw, ch);
+        if (restore) restore();
         return { dataURL: tmp.toDataURL('image/png'), w: cw, h: ch };
     }
 
