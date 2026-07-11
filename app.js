@@ -3431,6 +3431,11 @@ function drawJointLines(s) {
             ctx.moveTo(pts[0][0], pts[0][1]);
             for (let i=1; i<pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
             ctx.closePath(); ctx.clip();
+        } else if (s.shapeType === 'circle') {
+            const _cr = s.w / 2;
+            ctx.beginPath();
+            ctx.arc(s.x + _cr, s.y + _cr, _cr, 0, Math.PI * 2);
+            ctx.clip();
         } else {
             const _r = shapeRadii(s), _ch = shapeChamfers(s), _chB = shapeChamfersB(s);
             const hasCorner = Object.values(_r).some(v=>v>0) || Object.values(_ch).some(v=>v>0);
@@ -9598,7 +9603,7 @@ function slabAllPieces() {
             const vJoints = joints.filter(j => j.axis === 'v').map(j => j.pos / INCH).sort((a,b)=>a-b);
             const hJoints = joints.filter(j => j.axis === 'h').map(j => j.pos / INCH).sort((a,b)=>a-b);
             const dJoints = joints.filter(j => j.axis === 'd' && j.snap && j.otherSnap);
-            const canSplit = (st === 'rect' || st === 'bsp' || st === 'l' || st === 'u') && joints.length > 0;
+            const canSplit = (st === 'rect' || st === 'bsp' || st === 'l' || st === 'u' || st === 'circle') && joints.length > 0;
 
             if (!canSplit) {
                 out.push({ pageIdx:pi, shapeIdx:si, label:baseLabel, pageLabel, wi, hi, shapeType:st, segIdx:null });
