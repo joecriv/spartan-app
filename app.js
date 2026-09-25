@@ -42,6 +42,53 @@ function scheduleSyncToRemote() {
     _syncTimer = setTimeout(_syncAllToRemote, 8000);
 }
 
+// Return a copy of slabDefs with bgImages removed. Slab background photos are
+// base64 data URLs (often several MB). Shipping them to Supabase on every 8s
+// auto-sync bloats the write past the DB statement timeout. They're kept in
+// localStorage (local restore) and written to the cloud only on a manual Save.
+function _slabDefsNoImages(defs) {
+    return (defs || []).map(sd => (sd && sd.bgImage) ? { ...sd, bgImage: null } : sd);
+}
+
+// One-time heal for quotes saved before images were compressed: recompress any
+// oversized / PNG slab background image already in slabDefs down to a small
+// JPEG, so a manual Save of an old quote no longer times out. Best-effort,
+// fully guarded — never throws, never blocks the UI.
+function _recompressSlabImages() {
+    try {
+        let changed = false;
+        const pending = [];
+        (slabDefs || []).forEach((sd, i) => {
+            const url = sd && sd.bgImage;
+            if (!url || typeof url !== 'string') return;
+            const isPng = url.startsWith('data:image/png');
+            if (!isPng && url.length < 400000) return; // already a small JPEG
+            pending.push(new Promise(res => {
+                try {
+                    const img = new Image();
+                    img.onload = () => {
+                        try {
+                            const w = Math.min(1100, img.naturalWidth || 1100);
+                            const h = Math.round((img.naturalHeight || w) * (w / (img.naturalWidth || w)));
+                            const c = document.createElement('canvas');
+                            c.width = w; c.height = h;
+                            c.getContext('2d').drawImage(img, 0, 0, w, h);
+                            const jpg = c.toDataURL('image/jpeg', 0.72);
+                            if (jpg && jpg.length < url.length) { sd.bgImage = jpg; delete slabBgImgEls[i]; changed = true; }
+                        } catch (_) {}
+                        res();
+                    };
+                    img.onerror = () => res();
+                    img.src = url;
+                } catch (_) { res(); }
+            }));
+        });
+        if (pending.length) Promise.all(pending).then(() => {
+            if (changed) { try { persistSlab(); if (typeof slabRefreshSlabList === 'function') slabRefreshSlabList(); if (typeof slabRender === 'function') slabRender(); } catch (_) {} }
+        });
+    } catch (_) {}
+}
+
 async function _syncAllToRemote() {
     if (!currentUserId) return;
     // Snapshot the quote id at the START of the auto-sync. If New Quote
@@ -54,11 +101,17 @@ async function _syncAllToRemote() {
         const raw = localStorage.getItem(key);
         if (raw) {
             try {
+                let payload = JSON.parse(raw);
+                // Strip heavy slab background images from the session backup —
+                // they live in localStorage and in the quote row already.
+                if (key === 'spartan_v4' && payload && payload.slabDefs) {
+                    payload = { ...payload, slabDefs: _slabDefsNoImages(payload.slabDefs) };
+                }
                 const { error } = await _sb.from('user_data').upsert({
                     clerk_user_id: currentUserId,
                     shop_id: currentShopId,
                     storage_key: key,
-                    data: JSON.parse(raw),
+                    data: payload,
                     updated_at: new Date().toISOString()
                 }, { onConflict: 'clerk_user_id,storage_key' });
                 if (error) console.warn('user_data sync failed for', key, error);
@@ -71,7 +124,7 @@ async function _syncAllToRemote() {
     // happens during user_data upserts and the post-loop check still sees
     // the old id.
     if (snapshotQuoteId && snapshotQuoteId === currentQuoteId) {
-        await saveQuoteToDb();
+        await saveQuoteToDb({ auto: true });
     } else if (snapshotQuoteId && !currentQuoteId) {
         console.warn('[autoSync] skipping quote save — currentQuoteId was reset mid-sync', snapshotQuoteId);
     }
@@ -8303,15 +8356,20 @@ function setSaveStatus(state, extra) {
 //      self-healing — a stale localStorage id won't cause silent data loss.
 //   3. On ANY failure, auto-download a JSON backup so the user never loses
 //      their work even if Supabase is unreachable.
-async function saveQuoteToDb() {
+async function saveQuoteToDb(opts = {}) {
+    const { auto = false } = opts;
     if (!currentShopId || !currentUserId) return { ok: false, error: 'Not signed in' };
     setSaveStatus('saving');
     saveForm();
     syncPageOut();
+    // On the frequent background auto-save, drop slab background images so the
+    // write stays small and never hits the DB statement timeout. A manual Save
+    // (auto=false) writes the full images to the cloud.
     const qData = {
         pages: pages.map(p => ({ id:p.id, name:p.name, shapes:p.shapes, textItems:p.textItems, measurements:p.measurements||[], profileDiags:p.profileDiags||[], nextId:p.nextId })),
         currentPageIdx,
-        slabDefs, slabPlaced, _slabNextId
+        slabDefs: auto ? _slabDefsNoImages(slabDefs) : slabDefs,
+        slabPlaced, _slabNextId
     };
     const fData = { ...formData };
     const pData = { ...pricingData };
@@ -8393,9 +8451,11 @@ async function saveQuoteToDb() {
     } catch (err) {
         console.error('saveQuoteToDb failed:', err);
         setSaveStatus('failed', err.message || err.code || String(err));
-        // Emergency local backup so the user's work isn't lost even if every
-        // save to the cloud fails.
-        try { _downloadQuoteJson(); } catch (_) {}
+        // Emergency local backup so the user's work isn't lost even if the save
+        // to the cloud fails — but ONLY on a manual save. Auto-saves fire every
+        // few seconds while drawing; downloading a JSON on each failure spammed
+        // the user's Downloads folder with hundreds of files.
+        if (!auto) { try { _downloadQuoteJson(); } catch (_) {} }
         return { ok: false, error: err.message || String(err) };
     }
 }
@@ -8442,6 +8502,7 @@ async function loadQuoteFromDb(quoteId) {
     render(); updateStatus();
     regUpdateCurrentBanner();
     switchPanelTab('layout');
+    _recompressSlabImages();   // shrink any legacy oversized slab photos
 }
 
 // Refresh the registry list from Supabase.
@@ -13575,7 +13636,10 @@ function _perspectiveWarp(srcImg, srcPts, outW, outH) {
             _drawTexTri(octx,srcImg, dx10,dy10,dx11,dy11,dx01,dy01, sx10,sy10,sx11,sy11,sx01,sy01);
         }
     }
-    return oc.toDataURL('image/png');
+    // JPEG (not PNG) keeps the data URL small — a warped slab photo as PNG can
+    // be several MB; as JPEG q0.72 it is a few hundred KB. The warp fills the
+    // whole canvas so there is no transparency to lose.
+    return oc.toDataURL('image/jpeg', 0.72);
 }
 
 // ── Overlay UI ────────────────────────────────────────────────────────
@@ -13637,7 +13701,7 @@ function _slabImgApply(slabIdx) {
     const st = _slabImgState; if (!st) return;
     const sd = slabDefs[slabIdx];
     // Output at slab aspect ratio, max 1400px wide
-    const outW = Math.min(1400, st.imgEl.naturalWidth);
+    const outW = Math.min(1100, st.imgEl.naturalWidth);
     const outH = Math.round(outW * sd.h / sd.w);
     const dataUrl = _perspectiveWarp(st.imgEl, st.corners, outW, outH);
     if (!dataUrl) { alert('Image processing failed — please retry.'); return; }
@@ -14424,4 +14488,5 @@ function initApp() {
     document.getElementById('pg-add').addEventListener('click', addPage);
     drawRulerCorner(); drawRulerH(); drawRulerV();
     render(); updateStatus();
+    _recompressSlabImages();   // shrink any legacy oversized slab photos
 }
