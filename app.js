@@ -33,7 +33,11 @@ const _sb = window.supabase.createClient(BRAND.supabaseUrl, BRAND.supabaseKey);
 // localStorage stays as the fast cache. Changes are synced to
 // Supabase every 3 seconds after the last write.
 let _syncTimer = null;
-const SYNC_KEYS = ['spartan_v4', 'spartan_form', 'spartan_pricing', 'spartan_matdb'];
+// Per-user session data. The material catalogue (spartan_matdb) is NOT here —
+// it is shared shop-wide (see the shop-catalogue sync below).
+const SYNC_KEYS = ['spartan_v4', 'spartan_form', 'spartan_pricing'];
+let _matSyncTimer = null;
+let _shopCatReady = false; // true once the shop catalogue has been pulled this session
 
 function scheduleSyncToRemote() {
     if (!currentUserId) return;
@@ -134,6 +138,31 @@ async function _syncAllToRemote() {
 function syncNow() { clearTimeout(_syncTimer); _syncAllToRemote(); }
 window.addEventListener('beforeunload', syncNow);
 
+// ── Shop-wide material catalogue ────────────────────────────
+// The material database (colours + slab prices) is shared by everyone in the
+// shop. It lives in ONE user_data row owned by a synthetic "shop:<shopId>"
+// key, instead of one row per user. Editing prices updates that single row,
+// and every teammate pulls it on sign-in.
+function _shopCatalogOwner() { return 'shop:' + (currentShopId || BRAND.shopId || ''); }
+function scheduleMatDbSync() { clearTimeout(_matSyncTimer); _matSyncTimer = setTimeout(_syncMatDbToShop, 3000); }
+async function _syncMatDbToShop() {
+    if (!_shopCatReady) return;              // don't write until we've pulled the shop copy (avoids clobbering)
+    const owner = _shopCatalogOwner();
+    if (!owner || owner === 'shop:') return;
+    const raw = localStorage.getItem(MATDB_KEY);
+    if (!raw) return;
+    try {
+        const { error } = await _sb.from('user_data').upsert({
+            clerk_user_id: owner,
+            shop_id: currentShopId || BRAND.shopId,
+            storage_key: MATDB_KEY,
+            data: JSON.parse(raw),
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'clerk_user_id,storage_key' });
+        if (error) console.warn('shop catalogue sync failed', error);
+    } catch (e) { console.warn('shop catalogue sync threw', e); }
+}
+
 // Pull from Supabase → localStorage (run once on sign-in, before app init)
 async function pullFromRemote() {
     if (!currentUserId) return;
@@ -147,6 +176,23 @@ async function pullFromRemote() {
             }
         }
     } catch (e) { /* offline or error — use whatever is in localStorage */ }
+    // Shop-wide material catalogue — overrides any per-user copy restored above.
+    try {
+        const owner = _shopCatalogOwner();
+        const { data: shopRows } = await _sb.from('user_data')
+            .select('data')
+            .eq('clerk_user_id', owner)
+            .eq('storage_key', MATDB_KEY)
+            .limit(1);
+        _shopCatReady = true; // we now know the shop-catalogue state; writes are safe
+        if (shopRows && shopRows.length && shopRows[0].data) {
+            localStorage.setItem(MATDB_KEY, JSON.stringify(shopRows[0].data));
+        } else if (localStorage.getItem(MATDB_KEY)) {
+            // No shop catalogue yet — seed it from this device's catalogue so the
+            // current prices become the shared shop catalogue (one-time migration).
+            await _syncMatDbToShop();
+        }
+    } catch (e) { /* offline — fall back to the local/per-user copy, don't write */ }
 }
 
 // ── Seat enforcement ────────────────────────────────────────
@@ -6748,7 +6794,7 @@ function linkMat(matId, dbId) {
 document.getElementById('add-mat-btn').addEventListener('click', addMaterial);
 
 // ── Material Database ───────────────────────────────────────
-function saveMatDb() { localStorage.setItem(MATDB_KEY, JSON.stringify(matDb)); scheduleSyncToRemote(); }
+function saveMatDb() { localStorage.setItem(MATDB_KEY, JSON.stringify(matDb)); scheduleMatDbSync(); }
 // Migration: legacy matDbs (saved before the Vicostone catalogue was added)
 // don't have any Vicostone entries. Append them once on load so existing
 // users see the brand without resetting their database.
