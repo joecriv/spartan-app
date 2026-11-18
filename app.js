@@ -7467,13 +7467,16 @@ function loadPricing() {
             // shop-global rates so the Costs panel isn't all zeros.
             pricingData.rates = getSavedRates();
         }
-        // Shop-wide rates win: if the shared shop rates have real values (seeded
-        // by pullFromRemote), use them for this session so a teammate's rate
-        // update applies for everyone. Never override with an empty/all-zero set.
+        // Shop-wide rates: adopt each shared rate that has a real (non-zero)
+        // value so a teammate's update applies for everyone — but a missing or
+        // zero shared rate NEVER wipes a rate this session already has. This
+        // keeps charges like cutting from silently dropping to $0.
         try {
             const sr = JSON.parse(localStorage.getItem(RATES_KEY));
-            if (sr && typeof sr === 'object' && Object.values(sr).some(v => +v > 0)) {
-                pricingData.rates = getSavedRates();
+            if (sr && typeof sr === 'object') {
+                for (const k of Object.keys(DEFAULT_RATES)) {
+                    if (+sr[k] > 0) pricingData.rates[k] = sr[k];
+                }
             }
         } catch (_) {}
     } catch(e) {}
