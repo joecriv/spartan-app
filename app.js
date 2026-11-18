@@ -33,11 +33,10 @@ const _sb = window.supabase.createClient(BRAND.supabaseUrl, BRAND.supabaseKey);
 // localStorage stays as the fast cache. Changes are synced to
 // Supabase every 3 seconds after the last write.
 let _syncTimer = null;
-// Per-user session data. The material catalogue (spartan_matdb) is NOT here —
-// it is shared shop-wide (see the shop-catalogue sync below).
+// Per-user session data. The material catalogue AND service rates are NOT here —
+// they are shared shop-wide (see SHOP_KEYS / the shop cost sync below).
 const SYNC_KEYS = ['spartan_v4', 'spartan_form', 'spartan_pricing'];
-let _matSyncTimer = null;
-let _shopCatReady = false; // true once the shop catalogue has been pulled this session
+let _shopCatReady = false; // true once the shop cost data has been pulled this session
 
 function scheduleSyncToRemote() {
     if (!currentUserId) return;
@@ -138,29 +137,32 @@ async function _syncAllToRemote() {
 function syncNow() { clearTimeout(_syncTimer); _syncAllToRemote(); }
 window.addEventListener('beforeunload', syncNow);
 
-// ── Shop-wide material catalogue ────────────────────────────
-// The material database (colours + slab prices) is shared by everyone in the
-// shop. It lives in ONE user_data row owned by a synthetic "shop:<shopId>"
-// key, instead of one row per user. Editing prices updates that single row,
-// and every teammate pulls it on sign-in.
+// ── Shop-wide cost data ─────────────────────────────────────
+// The whole Costs tab — the material catalogue (colours + slab prices) AND the
+// service rates — is shared by everyone in the shop. Each lives in ONE
+// user_data row owned by a synthetic "shop:<shopId>" key, instead of one row
+// per user. When anyone updates a cost, that single row changes and every
+// teammate pulls it on sign-in. Per-quote/per-user data is NOT shared.
+const SHOP_KEYS = ['spartan_matdb', 'spartan_rates']; // catalogue + service rates
+const _shopSyncTimers = {};
 function _shopCatalogOwner() { return 'shop:' + (currentShopId || BRAND.shopId || ''); }
-function scheduleMatDbSync() { clearTimeout(_matSyncTimer); _matSyncTimer = setTimeout(_syncMatDbToShop, 3000); }
-async function _syncMatDbToShop() {
+function scheduleShopKeySync(key) { clearTimeout(_shopSyncTimers[key]); _shopSyncTimers[key] = setTimeout(() => _syncShopKey(key), 3000); }
+async function _syncShopKey(key) {
     if (!_shopCatReady) return;              // don't write until we've pulled the shop copy (avoids clobbering)
     const owner = _shopCatalogOwner();
     if (!owner || owner === 'shop:') return;
-    const raw = localStorage.getItem(MATDB_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return;
     try {
         const { error } = await _sb.from('user_data').upsert({
             clerk_user_id: owner,
             shop_id: currentShopId || BRAND.shopId,
-            storage_key: MATDB_KEY,
+            storage_key: key,
             data: JSON.parse(raw),
             updated_at: new Date().toISOString()
         }, { onConflict: 'clerk_user_id,storage_key' });
-        if (error) console.warn('shop catalogue sync failed', error);
-    } catch (e) { console.warn('shop catalogue sync threw', e); }
+        if (error) console.warn('shop cost sync failed for', key, error);
+    } catch (e) { console.warn('shop cost sync threw for', key, e); }
 }
 
 // Pull from Supabase → localStorage (run once on sign-in, before app init)
@@ -176,22 +178,29 @@ async function pullFromRemote() {
             }
         }
     } catch (e) { /* offline or error — use whatever is in localStorage */ }
-    // Shop-wide material catalogue — overrides any per-user copy restored above.
+    // Shop-wide cost data (material catalogue + service rates) — overrides any
+    // per-user copy restored above.
     try {
         const owner = _shopCatalogOwner();
-        const { data: shopRows } = await _sb.from('user_data')
-            .select('data')
-            .eq('clerk_user_id', owner)
-            .eq('storage_key', MATDB_KEY)
-            .limit(1);
-        _shopCatReady = true; // we now know the shop-catalogue state; writes are safe
-        if (shopRows && shopRows.length && shopRows[0].data) {
-            localStorage.setItem(MATDB_KEY, JSON.stringify(shopRows[0].data));
-        } else if (localStorage.getItem(MATDB_KEY)) {
-            // No shop catalogue yet — seed it from this device's catalogue so the
-            // current prices become the shared shop catalogue (one-time migration).
-            await _syncMatDbToShop();
+        // Make sure a local rates copy exists to seed from (rates normally live
+        // inside spartan_pricing until the Costs tab is first saved).
+        if (!localStorage.getItem('spartan_rates')) {
+            try { const p = JSON.parse(localStorage.getItem('spartan_pricing')); if (p && p.rates) localStorage.setItem('spartan_rates', JSON.stringify(p.rates)); } catch (_) {}
         }
+        for (const key of SHOP_KEYS) {
+            const { data: shopRows } = await _sb.from('user_data')
+                .select('data')
+                .eq('clerk_user_id', owner)
+                .eq('storage_key', key)
+                .limit(1);
+            if (shopRows && shopRows.length && shopRows[0].data) {
+                localStorage.setItem(key, JSON.stringify(shopRows[0].data)); // shop copy wins
+            } else if (localStorage.getItem(key)) {
+                _shopCatReady = true;           // allow the seeding write below
+                await _syncShopKey(key);        // seed the shared row from this device (one-time migration)
+            }
+        }
+        _shopCatReady = true; // we now know the shop cost state; writes are safe
     } catch (e) { /* offline — fall back to the local/per-user copy, don't write */ }
 }
 
@@ -6794,7 +6803,7 @@ function linkMat(matId, dbId) {
 document.getElementById('add-mat-btn').addEventListener('click', addMaterial);
 
 // ── Material Database ───────────────────────────────────────
-function saveMatDb() { localStorage.setItem(MATDB_KEY, JSON.stringify(matDb)); scheduleMatDbSync(); }
+function saveMatDb() { localStorage.setItem(MATDB_KEY, JSON.stringify(matDb)); scheduleShopKeySync(MATDB_KEY); }
 // Migration: legacy matDbs (saved before the Vicostone catalogue was added)
 // don't have any Vicostone entries. Append them once on load so existing
 // users see the brand without resetting their database.
@@ -7420,8 +7429,10 @@ function fmt$(v) {
 
 function savePricing() {
     localStorage.setItem(PRICING_KEY, JSON.stringify(pricingData));
-    // Mirror just the rates to a shop-global key so they seed future new quotes.
-    if (pricingData.rates) localStorage.setItem(RATES_KEY, JSON.stringify(pricingData.rates));
+    // Mirror just the rates to the shop-global key and push them shop-wide so a
+    // rate change by anyone applies for the whole team. Per-quote data stays per
+    // user (still synced via scheduleSyncToRemote below).
+    if (pricingData.rates) { localStorage.setItem(RATES_KEY, JSON.stringify(pricingData.rates)); scheduleShopKeySync(RATES_KEY); }
     scheduleSyncToRemote();
 }
 
@@ -7456,6 +7467,15 @@ function loadPricing() {
             // shop-global rates so the Costs panel isn't all zeros.
             pricingData.rates = getSavedRates();
         }
+        // Shop-wide rates win: if the shared shop rates have real values (seeded
+        // by pullFromRemote), use them for this session so a teammate's rate
+        // update applies for everyone. Never override with an empty/all-zero set.
+        try {
+            const sr = JSON.parse(localStorage.getItem(RATES_KEY));
+            if (sr && typeof sr === 'object' && Object.values(sr).some(v => +v > 0)) {
+                pricingData.rates = getSavedRates();
+            }
+        } catch (_) {}
     } catch(e) {}
 }
 
