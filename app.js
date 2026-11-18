@@ -7993,12 +7993,22 @@ function renderPricingPanel() {
         pageBlocksByPageId.get(pid).push({ mid, ...b });
     }
 
-    // Warn about canvas pages that have shapes but no linked material
+    // Pages that have shapes but no linked material: every piece still has to be
+    // cut, so cutting is ALWAYS charged (at the standard Coupe rate — no material
+    // means we can't know if it's Dekton). The slab cost is added once a material
+    // is linked; the warning stays so the user knows to pick one.
     const orphanPages = pages.filter(p => (pageSqftById[p.id] || 0) > 0 && !pageBlocksByPageId.has(p.id));
     if (orphanPages.length > 0) {
+        const orphanSqft = orphanPages.reduce((s, p) => s + (pageSqftById[p.id] || 0), 0);
+        const orphanCutRate = pricingData.rates.coupe || 0;
+        const orphanCutCost = orphanSqft * orphanCutRate;
+        materialCostTotal += orphanCutCost;
         sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px;border:1px dashed #e0a050;border-radius:6px;padding:8px;background:#1f1b10">
-            <div style="color:#e0a050;font-size:11px;font-weight:700;margin-bottom:3px">⚠ Page(s) without a linked material</div>
-            <div style="color:#aaa;font-size:10px">These canvas pages have shapes but no linked material: ${orphanPages.map(p=>p.name).join(', ')}. Add a material of type "Page" and link it to each page to include them in pricing.</div>
+            <div style="color:#e0a050;font-size:11px;font-weight:700;margin-bottom:3px">Pieces without a material — cutting still charged</div>
+            <div style="color:#aaa;font-size:10px;margin-bottom:5px">${orphanPages.map(p=>p.name).join(', ')}: no material linked yet. All pieces are cut, so cutting is charged below — link a "Page" material to also price the slab.</div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;padding:2px 0;border-top:1px dashed #333">
+                <span>Cut: ${orphanSqft.toFixed(2)} sqft × ${fmt$(orphanCutRate)}</span><span>${fmt$(orphanCutCost)}</span>
+            </div>
         </div>`;
     }
 
