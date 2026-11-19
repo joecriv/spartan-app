@@ -153,6 +153,9 @@ async function _syncShopKey(key) {
     if (!owner || owner === 'shop:') return;
     const raw = localStorage.getItem(key);
     if (!raw) return;
+    // Never overwrite the shared shop row with an empty/all-zero catalogue or
+    // rate set — that's what was wiping everyone's prices.
+    try { if (!_shopDataHasValue(key, JSON.parse(raw))) return; } catch (_) { return; }
     try {
         const { error } = await _sb.from('user_data').upsert({
             clerk_user_id: owner,
@@ -165,6 +168,21 @@ async function _syncShopKey(key) {
     } catch (e) { console.warn('shop cost sync threw for', key, e); }
 }
 
+// True if a catalogue has at least one real price, or a rates object has at
+// least one non-zero rate. Used to avoid ever letting empty/default cost data
+// overwrite the shared shop copy.
+function _shopDataHasValue(key, data) {
+    try {
+        if (key === 'spartan_matdb') {
+            return Array.isArray(data) && data.some(m => (+m.costPerSlab > 0) || (m.variantCosts && Object.values(m.variantCosts).some(v => +v > 0)));
+        }
+        if (key === 'spartan_rates') {
+            return data && typeof data === 'object' && Object.values(data).some(v => +v > 0);
+        }
+    } catch (_) {}
+    return false;
+}
+
 // Pull from Supabase → localStorage (run once on sign-in, before app init)
 async function pullFromRemote() {
     if (!currentUserId) return;
@@ -174,12 +192,14 @@ async function pullFromRemote() {
             .eq('clerk_user_id', currentUserId);
         if (rows && rows.length) {
             for (const row of rows) {
+                // Shared cost data comes ONLY from the shop row (below). Never let
+                // a stale per-user copy of these keys shadow it.
+                if (SHOP_KEYS.includes(row.storage_key)) continue;
                 localStorage.setItem(row.storage_key, JSON.stringify(row.data));
             }
         }
     } catch (e) { /* offline or error — use whatever is in localStorage */ }
-    // Shop-wide cost data (material catalogue + service rates) — overrides any
-    // per-user copy restored above.
+    // Shop-wide cost data (material catalogue + service rates).
     try {
         const owner = _shopCatalogOwner();
         // Make sure a local rates copy exists to seed from (rates normally live
@@ -193,11 +213,15 @@ async function pullFromRemote() {
                 .eq('clerk_user_id', owner)
                 .eq('storage_key', key)
                 .limit(1);
-            if (shopRows && shopRows.length && shopRows[0].data) {
-                localStorage.setItem(key, JSON.stringify(shopRows[0].data)); // shop copy wins
-            } else if (localStorage.getItem(key)) {
-                _shopCatReady = true;           // allow the seeding write below
-                await _syncShopKey(key);        // seed the shared row from this device (one-time migration)
+            const shopData = (shopRows && shopRows.length) ? shopRows[0].data : null;
+            if (_shopDataHasValue(key, shopData)) {
+                localStorage.setItem(key, JSON.stringify(shopData)); // shop copy with real values wins
+            } else {
+                // Shop copy is missing or empty. Seed it from this device ONLY if
+                // this device actually has real prices/rates — never push empties.
+                let local = null;
+                try { local = JSON.parse(localStorage.getItem(key)); } catch (_) {}
+                if (_shopDataHasValue(key, local)) { _shopCatReady = true; await _syncShopKey(key); }
             }
         }
         _shopCatReady = true; // we now know the shop cost state; writes are safe
