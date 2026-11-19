@@ -46,8 +46,20 @@ async function build() {
     });
     fs.writeFileSync(path.join(DIST, 'manual.js'), manMin.code);
 
-    // 5. Copy index.html as-is
-    fs.copyFileSync(path.join(__dirname, 'index.html'), path.join(DIST, 'index.html'));
+    // 5. Copy index.html, stamping a content-hash version onto every asset URL
+    //    (app.js / config.js / style.css / manual.js). A new build → new hash →
+    //    browsers fetch the fresh files automatically on the next load, so nobody
+    //    is left running a stale cached version after a deploy.
+    const crypto = require('crypto');
+    const ver = crypto.createHash('md5').update(appMin.code + cfgMin.code + cssMin + manMin.code).digest('hex').slice(0, 10);
+    let indexHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+    indexHtml = indexHtml
+        .replace(/href="style\.css"/g,  `href="style.css?v=${ver}"`)
+        .replace(/src="config\.js"/g,   `src="config.js?v=${ver}"`)
+        .replace(/src="app\.js"/g,      `src="app.js?v=${ver}"`)
+        .replace(/src="manual\.js"/g,   `src="manual.js?v=${ver}"`);
+    fs.writeFileSync(path.join(DIST, 'index.html'), indexHtml);
+    console.log(`asset version: ${ver}`);
 
     // Report sizes
     const origSize = appSrc.length;
