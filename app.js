@@ -8598,6 +8598,20 @@ async function loadQuoteFromDb(quoteId) {
     if (q.pricing_data) {
         pricingData = q.pricing_data;
     }
+    if (!pricingData.rates) pricingData.rates = {};
+    // Retroactive pricing: reopening ANY saved quote refreshes its service rates
+    // to the current shop rates, so old quotes (incl. ones saved with the old or
+    // zeroed rates) price at today's rates. Material slab prices already come
+    // from the live shared catalogue. A missing/zero shop rate never wipes a
+    // rate the quote already had. Nothing is rewritten in the DB until you save.
+    try {
+        const sr = JSON.parse(localStorage.getItem(RATES_KEY));
+        if (sr && typeof sr === 'object') {
+            for (const k of Object.keys(DEFAULT_RATES)) {
+                if (+sr[k] > 0) pricingData.rates[k] = sr[k];
+            }
+        }
+    } catch (_) {}
     currentQuoteId = quoteId;
     localStorage.setItem('spartan_currentQuoteId', quoteId);
     _nextPageId = Math.max(...pages.map(p => p.id), 1) + 1;
