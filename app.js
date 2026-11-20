@@ -380,9 +380,105 @@ const EDGE_DEFS = {
     special:   { abbr: 'SF',   letter: 'S',  label: 'Special Finish',    color: '#228B22' },
     joint:     { abbr: 'JT',   letter: 'J',  label: 'Joint Edge',        color: '#e0457b' },
     waterfall: { abbr: 'WF',   letter: 'W',  label: 'Waterfall Edge',    color: '#006688' },
+    handicap:  { abbr: 'HC',   letter: 'C',  label: 'Handicap Edge',     color: '#8e44ad' },
 };
 // All polished subtypes — used for pricing (all use same polish rate)
 const POLISHED_TYPES = new Set(['pencil','ogee','bullnose','halfbull','bevel','polished']);
+
+// ─────────────────────────────────────────────────────────────
+//  Fabrication retail pricing — per material thickness (2cm / 3cm)
+//  Source: Spartan Installations FABRICATION RETAIL PRICES sheet.
+//  Every drawn edge profile bills its linear footage at the rate for
+//  that profile AND the piece's material thickness. Cutouts bill per
+//  unit, also by thickness. These are the DEFAULTS; a shop override
+//  stored under pricingData.rates['edge:<profile>:<2|3>'] (or
+//  'cut:<key>:<2|3>') wins when > 0.
+// ─────────────────────────────────────────────────────────────
+const FAB_EDGE_RATES = {
+    pencil:    { '2': 15,   '3': 13   },  // Pencil / Nosing — also used for 'polished'
+    bevel:     { '2': 16.5, '3': 18.5 },
+    halfbull:  { '2': 22,   '3': 24   },
+    bullnose:  { '2': 23,   '3': 25   },
+    ogee:      { '2': 32,   '3': 34   },
+    mitered:   { '2': 49,   '3': 49   },  // Mitered / 45° (Lamine) — same both thicknesses
+    handicap:  { '2': 30,   '3': 35   },
+    waterfall: { '2': 0,    '3': 0    },  // Waterfall — no extra charge
+};
+// Edge profiles that bill, in display order. 'polished' folds into 'pencil'.
+const FAB_EDGE_PROFILES = [
+    { key:'pencil',    label:'Pencil / Nosing' },
+    { key:'bevel',     label:'Bevel' },
+    { key:'halfbull',  label:'Half Bullnose' },
+    { key:'bullnose',  label:'Full Bullnose' },
+    { key:'ogee',      label:'Ogee' },
+    { key:'mitered',   label:'Mitered 45°' },
+    { key:'handicap',  label:'Handicap' },
+    { key:'waterfall', label:'Waterfall' },
+];
+const FAB_CUTOUT_RATES = {
+    evierOver:   { '2': 100, '3': 125 },  // Rough sink hole (overmount)
+    evierUnder:  { '2': 250, '3': 275 },  // Polish kitchen sink (undermount)
+    evierVasque: { '2': 250, '3': 275 },  // Polish vanity sink — same as kitchen
+    cooktop:     { '2': 150, '3': 180 },  // Rough cooktop
+};
+// Drawn sink/cooktop subtype → cutout rate key + display label
+const FAB_CUTOUT_DEFS = [
+    { key:'evierOver',   countKey:'overmount',  label:'Rough sink hole' },
+    { key:'evierUnder',  countKey:'undermount', label:'Polish kitchen sink' },
+    { key:'evierVasque', countKey:'vasque',     label:'Polish vanity sink' },
+    { key:'cooktop',     countKey:'cooktops',   label:'Rough cooktop' },
+];
+// Flat (non-thickness) fees added at checkout, toggled on per quote.
+const FAB_SHAVE_RATE = 12;              // $/sqft of pieces flagged "needs shave"
+const FAB_LAYOUT_FEE = 100;             // flat per quote
+const FAB_CUSTOMER_HANDLING_FEE = 160;  // flat per quote
+
+// Map any thickness string → billing bucket '2' (≤2cm) or '3' (>2cm).
+// 2cm & 1.2cm → '2'; 3cm → '3'; unknown → '3' (safest/thickest).
+function thicknessBucket(thicknessStr) {
+    const n = parseFloat(String(thicknessStr || '').replace(/[^0-9.]/g, ''));
+    if (!n) return '3';
+    return n >= 2.5 ? '3' : '2';
+}
+// Per-thickness edge rate (shop override wins when > 0, else sheet default).
+function getEdgeRate(profile, bucket) {
+    const ov = pricingData && pricingData.rates && pricingData.rates['edge:' + profile + ':' + bucket];
+    if (typeof ov === 'number' && ov > 0) return ov;
+    return (FAB_EDGE_RATES[profile] && FAB_EDGE_RATES[profile][bucket]) || 0;
+}
+// Per-thickness cutout rate (shop override wins when > 0, else sheet default).
+function getCutoutRate(key, bucket) {
+    const ov = pricingData && pricingData.rates && pricingData.rates['cut:' + key + ':' + bucket];
+    if (typeof ov === 'number' && ov > 0) return ov;
+    return (FAB_CUTOUT_RATES[key] && FAB_CUTOUT_RATES[key][bucket]) || 0;
+}
+// Edge fabrication line items for a footage map {profile: linearFt} at a thickness.
+// Returns [{ key, label, lf, rate, cost, thick }] for profiles with lf > 0.
+function edgeFabItems(edgeFootage, thicknessStr) {
+    const b = thicknessBucket(thicknessStr);
+    const out = [];
+    for (const p of FAB_EDGE_PROFILES) {
+        let lf = edgeFootage[p.key] || 0;
+        if (p.key === 'pencil') lf += (edgeFootage.polished || 0);
+        if (lf <= 0) continue;
+        const rate = getEdgeRate(p.key, b);
+        out.push({ key: p.key, label: p.label, lf, rate, cost: lf * rate, thick: b });
+    }
+    return out;
+}
+// Cutout fabrication line items for a sink-count map at a thickness.
+function cutoutFabItems(sinks, thicknessStr) {
+    const b = thicknessBucket(thicknessStr);
+    const out = [];
+    for (const d of FAB_CUTOUT_DEFS) {
+        const qty = sinks[d.countKey] || 0;
+        if (qty <= 0) continue;
+        const rate = getCutoutRate(d.key, b);
+        out.push({ key: d.key, label: d.label, qty, rate, cost: qty * rate, thick: b });
+    }
+    return out;
+}
+function sumItems(items) { return items.reduce((s, i) => s + (i.cost || 0), 0); }
 
 // ─────────────────────────────────────────────────────────────
 //  State
@@ -2261,6 +2357,15 @@ function drawBorderSegment(gctx, type, x1, y1, x2, y2, sel) {
         for (let i = 8; i < len; i += 12) {
             gctx.beginPath(); gctx.moveTo(i-4,-4); gctx.lineTo(i,0); gctx.lineTo(i-4,4); gctx.stroke();
         }
+
+    } else if (type === 'handicap') {
+        // Eased ADA edge — rounded double line in purple
+        const nx = -(y2-y1)/len, ny = (x2-x1)/len;
+        gctx.strokeStyle = '#8e44ad'; gctx.lineWidth = 2.5; gctx.lineCap = 'round';
+        gctx.beginPath(); gctx.moveTo(x1,y1); gctx.lineTo(x2,y2); gctx.stroke();
+        gctx.lineWidth = 1.2; gctx.globalAlpha = 0.55;
+        gctx.beginPath(); gctx.moveTo(x1+nx*2.5,y1+ny*2.5); gctx.lineTo(x2+nx*2.5,y2+ny*2.5); gctx.stroke();
+        gctx.globalAlpha = 1;
     }
     gctx.restore();
 }
@@ -3758,6 +3863,7 @@ function drawPreview() {
 
 function render() {
     if (typeof refreshLockBtn === 'function') refreshLockBtn();
+    if (typeof refreshShaveBtn === 'function') refreshShaveBtn();
     dimLabelRects = [];
     dimClickTargets = [];
     // Grid
@@ -3813,6 +3919,28 @@ function render() {
         ctx.fillText(ghostText.text, ghostTextPos.x, ghostTextPos.y);
         ctx.globalAlpha = 1;
         ctx.restore();
+    }
+    // Shave markers — highlight pieces flagged "needs shave" ($12/sqft)
+    if (!proposalShapeOnly) {
+        for (const s of shapes) {
+            if (s.subtype || s.parentId != null || !s.needsShave) continue;
+            ctx.save();
+            ctx.strokeStyle = '#8e44ad';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([7, 4]);
+            ctx.strokeRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4);
+            ctx.setLineDash([]);
+            // "✂ SHAVE" tag at the top-left corner
+            const tag = '✂ SHAVE';
+            ctx.font = 'bold 10px Raleway, sans-serif';
+            const tw = ctx.measureText(tag).width;
+            ctx.fillStyle = '#8e44ad';
+            ctx.fillRect(s.x - 2, s.y - 16, tw + 8, 14);
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText(tag, s.x + 2, s.y - 9);
+            ctx.restore();
+        }
     }
     if (!proposalShapeOnly) drawHoverIndicators();
     if (!proposalShapeOnly) drawPreview();
@@ -6475,6 +6603,42 @@ function refreshLockBtn() {
 }
 document.getElementById('btn-lock').addEventListener('click', toggleLockSelected);
 
+// Per-piece "needs shave" flag — billed at $12/sqft of the piece's area.
+function toggleShaveSelected() {
+    const s = byId(selected);
+    if (!s || s.subtype || s.parentId != null) return;
+    pushUndo();
+    s.needsShave = !s.needsShave;
+    persist();
+    refreshShaveBtn();
+    render();
+    if (typeof renderPricingPanel === 'function') { try { renderPricingPanel(); } catch(e){} }
+}
+function refreshShaveBtn() {
+    const btn = document.getElementById('btn-shave');
+    if (!btn) return;
+    const s = byId(selected);
+    if (!s || s.subtype || s.parentId != null) {
+        btn.textContent = '✂ Shave';
+        btn.disabled = true;
+        btn.style.opacity = '0.45';
+        btn.classList.remove('active');
+        return;
+    }
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    if (s.needsShave) {
+        btn.textContent = '✂ Shaving';
+        btn.classList.add('active');
+        btn.title = 'This piece is marked for shaving ($12/sqft). Click to unmark.';
+    } else {
+        btn.textContent = '✂ Shave';
+        btn.classList.remove('active');
+        btn.title = 'Mark the selected piece as needing material shaving ($12/sqft).';
+    }
+}
+document.getElementById('btn-shave').addEventListener('click', toggleShaveSelected);
+
 // ─────────────────────────────────────────────────────────────
 //  Phase 3 — Right panel form
 // ─────────────────────────────────────────────────────────────
@@ -7683,27 +7847,44 @@ function calcPageSinkCounts(page) {
     return { overmount, undermount, vasque, cooktops, farmSinks, outlets, boccis };
 }
 
-// ── Compute service quantities for the new rate model ────────
-// Returns { pencilLf, coupeSqft, dektonCoupeSqft, evierOver, evierUnder, evierVasque, fini45Lf, lamineLf, polissageSousQty }
+// Billing thickness for a page: its linked Page material, else any Option
+// material, else any material with a thickness. '' → treated as 3cm (safest).
+function pageBillingThickness(page) {
+    const pm = (formData.materials || []).find(m => (m.type || 'page') === 'page' && m.pageId === page.id && m.thickness);
+    if (pm) return pm.thickness;
+    const opt = (formData.materials || []).find(m => m.type === 'option' && m.thickness);
+    if (opt) return opt.thickness;
+    const any = (formData.materials || []).find(m => m.thickness);
+    return any ? any.thickness : '';
+}
+
+// ── Compute service quantities (per-thickness fabrication model) ────────
+// Edges + cutouts are summed across pages, each page billed at its material's
+// thickness (2cm vs 3cm). Outlet/bocci/farmhouse stay flat. Also returns coupe
+// sqft, polissage sous, installation sqft, shave sqft, and measurements.
 function calcServiceQtys() {
-    let pencilLf = 0, coupeSqft = 0, dektonCoupeSqft = 0;
-    let evierOver = 0, evierUnder = 0, evierVasque = 0, cooktopQty = 0, farmSinkQty = 0;
-    let outletQty = 0, bocciQty = 0;
-    let fini45Lf = 0, lamineLf = 0;
-    let polishUnderSqft = 0;
-    let totalSqft = 0;
+    let coupeSqft = 0, dektonCoupeSqft = 0;
+    let cooktopQty = 0, farmSinkQty = 0, outletQty = 0, bocciQty = 0;
+    let polishUnderSqft = 0, totalSqft = 0, shaveSqft = 0;
+    const edgeAcc = {};    // profileKey -> { key,label,lf,cost, byThick:{'2':{lf,cost,rate}, ...} }
+    const cutoutAcc = {};  // cutKey     -> { key,label,qty,cost, byThick:{...} }
+    function accEdge(it) {
+        const a = edgeAcc[it.key] || (edgeAcc[it.key] = { key: it.key, label: it.label, lf: 0, cost: 0, byThick: {} });
+        a.lf += it.lf; a.cost += it.cost;
+        const t = a.byThick[it.thick] || (a.byThick[it.thick] = { lf: 0, cost: 0, rate: it.rate });
+        t.lf += it.lf; t.cost += it.cost; t.rate = it.rate;
+    }
+    function accCut(it) {
+        const a = cutoutAcc[it.key] || (cutoutAcc[it.key] = { key: it.key, label: it.label, qty: 0, cost: 0, byThick: {} });
+        a.qty += it.qty; a.cost += it.cost;
+        const t = a.byThick[it.thick] || (a.byThick[it.thick] = { qty: 0, cost: 0, rate: it.rate });
+        t.qty += it.qty; t.cost += it.cost; t.rate = it.rate;
+    }
     for (const page of pages) {
-        // Pencil linear feet
-        pencilLf += calcPageEdgeLinearFt(page, 'pencil') + calcPageEdgeLinearFt(page, 'polished');
-        // Waterfall = fini45
-        fini45Lf += calcPageEdgeLinearFt(page, 'waterfall');
-        // Mitered = lamine
-        lamineLf += calcPageEdgeLinearFt(page, 'mitered');
-        // Sinks
+        const thick = pageBillingThickness(page);
+        for (const it of edgeFabItems(calcPageEdgeFootage(page), thick)) accEdge(it);
         const sinks = calcPageSinkCounts(page);
-        evierOver += sinks.overmount;
-        evierUnder += sinks.undermount;
-        evierVasque += sinks.vasque;
+        for (const it of cutoutFabItems(sinks, thick)) accCut(it);
         cooktopQty += sinks.cooktops;
         farmSinkQty += sinks.farmSinks;
         outletQty += sinks.outlets;
@@ -7715,7 +7896,7 @@ function calcServiceQtys() {
                 polishUnderSqft += (r.w * r.h) / SQFT_PX2;
             }
         }
-        // Material area — split by Dekton vs non-Dekton
+        // Material area — split by Dekton vs non-Dekton; also sum shave sqft
         for (const s of page.shapes) {
             if (s.subtype) continue;
             let area = s.w * s.h;
@@ -7727,6 +7908,7 @@ function calcServiceQtys() {
             area -= totalCheckAreaPx(s);
             const sqft = area / SQFT_PX2;
             totalSqft += sqft;
+            if (s.needsShave) shaveSqft += sqft;
             // Check if material is Dekton
             const mid = s.materialId || (formData.materials[0] && formData.materials[0].id) || 0;
             const mat = formData.materials.find(m => m.id === mid) || {};
@@ -7740,49 +7922,84 @@ function calcServiceQtys() {
     }
     const measurementsQty = (pricingData.measurementsEnabled === false) ? 0 : 1;
     return {
-        pencilLf, coupeSqft, dektonCoupeSqft,
-        evierOver, evierUnder, evierVasque,
-        cooktopQty, farmSinkQty,
-        outletQty, bocciQty,
-        fini45Lf, lamineLf,
+        edgeAcc, cutoutAcc,
+        coupeSqft, dektonCoupeSqft,
+        cooktopQty, farmSinkQty, outletQty, bocciQty,
         polissageSousQty: polishUnderSqft,
         installationSqft: totalSqft,
+        shaveSqft,
         measurementsQty
     };
 }
 
-// Map rate key → { qty, unitLabel } for pricing display
+// Build display line items for the Services section. Edges + cutouts emit one
+// line per thickness bucket present (so each line shows a real per-ft / per-unit
+// rate). coupe/dektonCoupe/polissageSous/installation/measurements keep their
+// keys (consumers filter on them).
 function getServiceLineItems() {
     const q = calcServiceQtys();
-    const R = pricingData.rates;
-    return SERVICE_RATE_DEFS.map(d => {
-        let qty = 0, unitLabel = '';
-        switch (d.key) {
-            case 'pencil':        qty = q.pencilLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
-            case 'coupe':         qty = q.coupeSqft;         unitLabel = `${qty.toFixed(2)} sqft`; break;
-            case 'dektonCoupe':   qty = q.dektonCoupeSqft;   unitLabel = `${qty.toFixed(2)} sqft`; break;
-            case 'evierOver':     qty = q.evierOver;         unitLabel = `${qty} trou(s)`; break;
-            case 'evierUnder':    qty = q.evierUnder;        unitLabel = `${qty} trou(s)`; break;
-            case 'evierVasque':   qty = q.evierVasque;       unitLabel = `${qty} trou(s)`; break;
-            case 'cooktop':       qty = q.cooktopQty;        unitLabel = `${qty} trou(s)`; break;
-            case 'farmSink':      qty = q.farmSinkQty;       unitLabel = `${qty} évier(s)`; break;
-            case 'outlet':        qty = q.outletQty;         unitLabel = `${qty} outlet(s)`; break;
-            case 'bocci':         qty = q.bocciQty;          unitLabel = `${qty} bocci(s)`; break;
-            case 'fini45':        qty = q.fini45Lf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
-            case 'lamine':        qty = q.lamineLf;          unitLabel = `${qty.toFixed(2)} lin ft`; break;
-            case 'polissageSous': qty = q.polissageSousQty;  unitLabel = `${qty.toFixed(2)} sqft`; break;
-            case 'installation':  qty = q.installationSqft;  unitLabel = `${qty.toFixed(2)} sqft`; break;
-            case 'measurements':  qty = q.measurementsQty;   unitLabel = qty ? 'flat fee' : 'disabled'; break;
+    const R = pricingData.rates || {};
+    const items = [];
+    const thLbl = b => b === '2' ? '2cm' : '3cm';
+    // Edge profiles (per thickness)
+    for (const p of FAB_EDGE_PROFILES) {
+        const a = q.edgeAcc[p.key];
+        if (!a || a.lf <= 0) continue;
+        for (const b of Object.keys(a.byThick)) {
+            const t = a.byThick[b];
+            if (t.lf <= 0) continue;
+            items.push({ key: 'edge:' + p.key + ':' + b, label: p.label, desc: p.label + ' (' + thLbl(b) + ')',
+                unit: 'lf', qty: t.lf, rate: t.rate, cost: t.cost, unitLabel: `${t.lf.toFixed(2)} lin ft` });
         }
-        const rate = R[d.key] || 0;
-        let cost = qty * rate;
-        // Installation minimum fee: floor the installation cost if min > 0
-        if (d.key === 'installation') {
-            const minFee = pricingData.installationMin || 0;
-            if (minFee > 0 && cost < minFee) cost = minFee;
+    }
+    // Cutouts (per thickness)
+    for (const d of FAB_CUTOUT_DEFS) {
+        const a = q.cutoutAcc[d.key];
+        if (!a || a.qty <= 0) continue;
+        for (const b of Object.keys(a.byThick)) {
+            const t = a.byThick[b];
+            if (t.qty <= 0) continue;
+            items.push({ key: 'cut:' + d.key + ':' + b, label: d.label, desc: d.label + ' (' + thLbl(b) + ')',
+                unit: 'each', qty: t.qty, rate: t.rate, cost: t.cost, unitLabel: `${t.qty} trou(s)` });
         }
-        return { ...d, qty, rate, cost, unitLabel };
-    }).filter(item => item.qty > 0 || item.rate > 0);
+    }
+    // Flat sink-adjacent items (outlet / bocci / farmhouse)
+    const flatEach = [
+        { key: 'outlet',   label: 'Outlet',         desc: 'Outlet (2"×4")',          qty: q.outletQty,   u: 'outlet(s)' },
+        { key: 'bocci',    label: 'Bocci outlet',   desc: 'Bocci outlet (2" rond)',  qty: q.bocciQty,    u: 'bocci(s)' },
+        { key: 'farmSink', label: 'Farmhouse sink', desc: 'Évier farmhouse',         qty: q.farmSinkQty, u: 'évier(s)' },
+    ];
+    for (const f of flatEach) {
+        const rate = R[f.key] || 0;
+        if (f.qty <= 0 && rate <= 0) continue;
+        items.push({ key: f.key, label: f.label, desc: f.desc, unit: 'each', qty: f.qty, rate, cost: f.qty * rate, unitLabel: `${f.qty} ${f.u}` });
+    }
+    // Shave material (per sqft of pieces flagged "needs shave")
+    if (q.shaveSqft > 0) {
+        const rate = (typeof R.shave === 'number' && R.shave > 0) ? R.shave : FAB_SHAVE_RATE;
+        items.push({ key: 'shave', label: 'Shave material', desc: 'Shave material', unit: 'sqft',
+            qty: q.shaveSqft, rate, cost: q.shaveSqft * rate, unitLabel: `${q.shaveSqft.toFixed(2)} sqft` });
+    }
+    // Coupe / Dekton coupe (attributed per-material in the pricing panel; kept here
+    // with stable keys so downstream filters still work)
+    items.push({ key: 'coupe', label: 'Coupe', desc: 'Coupe du matériel', unit: 'sqft',
+        qty: q.coupeSqft, rate: R.coupe || 0, cost: q.coupeSqft * (R.coupe || 0), unitLabel: `${q.coupeSqft.toFixed(2)} sqft` });
+    items.push({ key: 'dektonCoupe', label: 'Dekton Coupe', desc: 'Coupe du matériel', unit: 'sqft',
+        qty: q.dektonCoupeSqft, rate: R.dektonCoupe || 0, cost: q.dektonCoupeSqft * (R.dektonCoupe || 0), unitLabel: `${q.dektonCoupeSqft.toFixed(2)} sqft` });
+    // Polissage sous
+    items.push({ key: 'polissageSous', label: 'Polissage sous', desc: 'Polissage sous morceau', unit: 'sqft',
+        qty: q.polissageSousQty, rate: R.polissageSous || 0, cost: q.polissageSousQty * (R.polissageSous || 0), unitLabel: `${q.polissageSousQty.toFixed(2)} sqft` });
+    // Installation (with min-fee floor)
+    let instCost = q.installationSqft * (R.installation || 0);
+    const minFee = pricingData.installationMin || 0;
+    if (minFee > 0 && instCost < minFee) instCost = minFee;
+    items.push({ key: 'installation', label: 'Installation', desc: 'Installation', unit: 'sqft',
+        qty: q.installationSqft, rate: R.installation || 0, cost: instCost, unitLabel: `${q.installationSqft.toFixed(2)} sqft` });
+    // Measurements
+    items.push({ key: 'measurements', label: 'Measurements', desc: 'Measurements', unit: 'flat',
+        qty: q.measurementsQty, rate: R.measurements || 0, cost: q.measurementsQty * (R.measurements || 0),
+        unitLabel: q.measurementsQty ? 'flat fee' : 'disabled' });
+    return items.filter(i => i.qty > 0 || i.rate > 0 || i.cost > 0);
 }
 
 // ── Render the full pricing panel ────────────────────────────
@@ -7882,19 +8099,55 @@ function renderCostsPanel() {
     const rateContainer = document.getElementById('cost-service-rates');
     if (rateContainer) {
         const R = pricingData.rates;
-        const unitLabels = { lf:'$/lin ft', sqft:'$/sqft', each:'$ / each' };
-        let html = SERVICE_RATE_DEFS.map(f => `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333">
+        const unitLabels = { lf:'$/lin ft', sqft:'$/sqft', each:'$ / each', flat:'$ flat' };
+        // Flat (non-thickness) rates still read live from pricingData.rates.
+        // Edge-profile + cutout rates moved to the per-thickness section below.
+        const FLAT_RATE_KEYS = new Set(['coupe','dektonCoupe','outlet','bocci','farmSink','polissageSous','installation','measurements']);
+        let html = SERVICE_RATE_DEFS.filter(f => FLAT_RATE_KEYS.has(f.key)).map(f => `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333">
             <span style="flex:1;color:#e0ddd5;font-size:11px">${f.label} <span style="color:#555;font-size:9px">${unitLabels[f.unit]||''}</span></span>
             <input class="mat-input cost-rate-inp" data-rkey="${f.key}" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${R[f.key]||0}">
         </div>`).join('');
+        // Shave material rate (defaults to sheet value if unset)
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333">
+            <span style="flex:1;color:#e0ddd5;font-size:11px">Shave material <span style="color:#555;font-size:9px">$/sqft</span></span>
+            <input class="mat-input cost-rate-inp" data-rkey="shave" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${(R.shave!=null?R.shave:FAB_SHAVE_RATE)}">
+        </div>`;
         // Installation minimum fee row
         html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 4px;border-bottom:1px solid #333;background:#181818">
             <span style="flex:1;color:#e0ddd5;font-size:11px">Installation min. fee <span style="color:#555;font-size:9px">$ flat floor</span></span>
             <input class="mat-input cost-inst-min-inp" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${pricingData.installationMin||0}">
         </div>`;
+
+        // ── Fabrication rates per thickness (2cm / 3cm) ──
+        html += `<div style="margin-top:10px;padding:6px 4px 3px;border-top:2px solid #444">
+            <div style="color:#b09030;font-size:10px;font-weight:700;letter-spacing:0.5px">FABRICATION — PER THICKNESS</div>
+            <div style="color:#666;font-size:8.5px;margin-bottom:4px">Billed by the piece's material thickness. Blank/0 uses the sheet default.</div>
+            <div style="display:flex;gap:6px;padding:2px 4px;color:#777;font-size:9px">
+                <span style="flex:1"></span><span style="width:75px;text-align:right">2cm</span><span style="width:75px;text-align:right">3cm</span>
+            </div>`;
+        const fabRow = (label, prefix, key, unit) => {
+            const v2 = R[prefix+':'+key+':2']; const v3 = R[prefix+':'+key+':3'];
+            const d2 = prefix==='edge' ? (FAB_EDGE_RATES[key]?.['2']) : (FAB_CUTOUT_RATES[key]?.['2']);
+            const d3 = prefix==='edge' ? (FAB_EDGE_RATES[key]?.['3']) : (FAB_CUTOUT_RATES[key]?.['3']);
+            return `<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #2a2a2a">
+                <span style="flex:1;color:#e0ddd5;font-size:11px">${label} <span style="color:#555;font-size:8.5px">${unit}</span></span>
+                <input class="mat-input cost-fab-inp" data-fkey="${prefix}:${key}:2" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${v2!=null?v2:''}" placeholder="${d2!=null?d2:'—'}">
+                <input class="mat-input cost-fab-inp" data-fkey="${prefix}:${key}:3" type="text" inputmode="decimal" style="width:75px;text-align:right" value="${v3!=null?v3:''}" placeholder="${d3!=null?d3:'—'}">
+            </div>`;
+        };
+        for (const p of FAB_EDGE_PROFILES) html += fabRow(p.label, 'edge', p.key, '$/lin ft');
+        for (const d of FAB_CUTOUT_DEFS)   html += fabRow(d.label, 'cut', d.key, '$ / each');
+        html += `</div>`;
+
         rateContainer.innerHTML = html;
         rateContainer.querySelectorAll('.cost-rate-inp').forEach(inp => inp.addEventListener('input', e => {
             pricingData.rates[e.target.dataset.rkey] = parseFloat(e.target.value) || 0;
+            savePricing();
+        }));
+        rateContainer.querySelectorAll('.cost-fab-inp').forEach(inp => inp.addEventListener('input', e => {
+            const raw = (e.target.value||'').trim();
+            if (raw === '') delete pricingData.rates[e.target.dataset.fkey];
+            else pricingData.rates[e.target.dataset.fkey] = parseFloat(raw) || 0;
             savePricing();
         }));
         const instMinInp = rateContainer.querySelector('.cost-inst-min-inp');
@@ -8166,6 +8419,33 @@ function renderPricingPanel() {
         </div>
     </div>`;
 
+    // ── Checkout fees: Layout + Customer material handling (flat toggles) ──
+    const layoutOn   = !!pricingData.layoutFee;
+    const handlingOn = !!pricingData.customerHandling;
+    const layoutCost   = layoutOn   ? FAB_LAYOUT_FEE : 0;
+    const handlingCost = handlingOn ? FAB_CUSTOMER_HANDLING_FEE : 0;
+    serviceCostTotal += layoutCost + handlingCost;
+
+    sumHtml += `<div class="room-pricing-section" style="margin-bottom:10px">
+        <div class="price-check-label">Checkout fees</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:#e0ddd5">
+                <input type="checkbox" id="pricing-layout-toggle" ${layoutOn ? 'checked' : ''} style="cursor:pointer">
+                Layout (flat fee)
+            </label>
+            <span style="font-size:10px;color:#999;margin-left:auto">${fmt$(FAB_LAYOUT_FEE)}</span>
+            <span style="font-size:11px;font-weight:700;color:#b09030">${layoutOn ? fmt$(layoutCost) : ''}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:#e0ddd5">
+                <input type="checkbox" id="pricing-handling-toggle" ${handlingOn ? 'checked' : ''} style="cursor:pointer">
+                Customer material handling (flat fee)
+            </label>
+            <span style="font-size:10px;color:#999;margin-left:auto">${fmt$(FAB_CUSTOMER_HANDLING_FEE)}</span>
+            <span style="font-size:11px;font-weight:700;color:#b09030">${handlingOn ? fmt$(handlingCost) : ''}</span>
+        </div>
+    </div>`;
+
     // ── Grand total of committed costs (pages + services) ──
     const committedTotal = materialCostTotal + serviceCostTotal;
     const TAX = 1.14975;
@@ -8316,6 +8596,17 @@ function renderPricingPanel() {
     const measToggle = document.getElementById('pricing-meas-toggle');
     if (measToggle) measToggle.addEventListener('change', e => {
         pricingData.measurementsEnabled = e.target.checked;
+        savePricing(); renderPricingPanel();
+    });
+    // Layout + Customer-handling checkout toggles
+    const layoutToggle = document.getElementById('pricing-layout-toggle');
+    if (layoutToggle) layoutToggle.addEventListener('change', e => {
+        pricingData.layoutFee = e.target.checked;
+        savePricing(); renderPricingPanel();
+    });
+    const handlingToggle = document.getElementById('pricing-handling-toggle');
+    if (handlingToggle) handlingToggle.addEventListener('change', e => {
+        pricingData.customerHandling = e.target.checked;
         savePricing(); renderPricingPanel();
     });
     // Custom install price — fires on blur/Enter (NOT input) so typing stays focused
@@ -11853,34 +12144,27 @@ function calcPagePricing(page) {
         cutCost = roomSqft * cutRate;
     }
 
-    // Edge services: pencil+polished → pencil rate, waterfall → fini45, mitered → lamine
+    // Edge + cutout fabrication — billed per linear foot / per unit at the
+    // page's material thickness (2cm vs 3cm). Outlet/bocci/farmhouse stay flat.
+    const thick = pageMat ? pageMat.thickness : '';
     const edgeFootage = calcPageEdgeFootage(page);
-    const pencilLf = (edgeFootage.pencil || 0) + (edgeFootage.polished || 0);
-    const fini45Lf = edgeFootage.waterfall || 0;
-    const lamineLf = edgeFootage.mitered || 0;
-    const pencilCost = pencilLf * (pricingData.rates.pencil || 0);
-    const fini45Cost = fini45Lf * (pricingData.rates.fini45 || 0);
-    const lamineCost = lamineLf * (pricingData.rates.lamine || 0);
-
-    // Sink + cooktop holes
     const sinks = calcPageSinkCounts(page);
-    const evierOverCost   = sinks.overmount  * (pricingData.rates.evierOver   || 0);
-    const evierUnderCost  = sinks.undermount * (pricingData.rates.evierUnder  || 0);
-    const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
-    const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
-    const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
-    const outletCost      = sinks.outlets    * (pricingData.rates.outlet      || 0);
-    const bocciCost       = sinks.boccis     * (pricingData.rates.bocci       || 0);
+    const edgeItems = edgeFabItems(edgeFootage, thick);
+    const cutoutItems = cutoutFabItems(sinks, thick);
+    const edgeCost = sumItems(edgeItems);
+    const cutoutCost = sumItems(cutoutItems);
+    const farmSinkCost = sinks.farmSinks * (pricingData.rates.farmSink || 0);
+    const outletCost   = sinks.outlets   * (pricingData.rates.outlet   || 0);
+    const bocciCost    = sinks.boccis    * (pricingData.rates.bocci    || 0);
 
-    const servicesCost  = pencilCost + fini45Cost + lamineCost + evierOverCost + evierUnderCost + evierVasqueCost + cooktopCost + farmSinkCost + outletCost + bocciCost;
+    const servicesCost  = edgeCost + cutoutCost + farmSinkCost + outletCost + bocciCost;
     const pageSubtotal  = matCost + cutCost + servicesCost;
 
     return {
         page, pageMat, roomSqft, isDekton,
         matCost, cutCost, cutRate,
-        edgeFootage, pencilLf, fini45Lf, lamineLf, pencilCost, fini45Cost, lamineCost,
-        sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost, farmSinkCost,
-        outletCost, bocciCost,
+        edgeFootage, edgeItems, cutoutItems, edgeCost, cutoutCost,
+        sinks, farmSinkCost, outletCost, bocciCost,
         servicesCost, pageSubtotal
     };
 }
@@ -11896,29 +12180,20 @@ function calcPageOptions(page) {
         (m.type||'page') === 'page' && m.pageId === page.id
     );
 
-    // Edge services (shared across options)
+    // Edge + cutout fabrication (shared across options) — billed at the page's
+    // material thickness (2cm vs 3cm). Outlet/bocci/farmhouse stay flat.
+    const pageThick = (mats[0] && mats[0].thickness) || '';
     const edgeFootage = calcPageEdgeFootage(page);
-    const pencilLf = (edgeFootage.pencil || 0) + (edgeFootage.polished || 0);
-    const fini45Lf = edgeFootage.waterfall || 0;
-    const lamineLf = edgeFootage.mitered || 0;
-    const pencilCost = pencilLf * (pricingData.rates.pencil || 0);
-    const fini45Cost = fini45Lf * (pricingData.rates.fini45 || 0);
-    const lamineCost = lamineLf * (pricingData.rates.lamine || 0);
-
-    // Sink/cooktop/farmhouse + outlets/boccis (shared across options)
     const sinks = calcPageSinkCounts(page);
-    const evierOverCost   = sinks.overmount  * (pricingData.rates.evierOver   || 0);
-    const evierUnderCost  = sinks.undermount * (pricingData.rates.evierUnder  || 0);
-    const evierVasqueCost = sinks.vasque     * (pricingData.rates.evierVasque || 0);
-    const cooktopCost     = sinks.cooktops   * (pricingData.rates.cooktop     || 0);
-    const farmSinkCost    = sinks.farmSinks  * (pricingData.rates.farmSink    || 0);
-    const outletCost      = sinks.outlets    * (pricingData.rates.outlet      || 0);
-    const bocciCost       = sinks.boccis     * (pricingData.rates.bocci       || 0);
+    const edgeItems = edgeFabItems(edgeFootage, pageThick);
+    const cutoutItems = cutoutFabItems(sinks, pageThick);
+    const edgeCost = sumItems(edgeItems);
+    const cutoutCost = sumItems(cutoutItems);
+    const farmSinkCost = sinks.farmSinks * (pricingData.rates.farmSink || 0);
+    const outletCost   = sinks.outlets   * (pricingData.rates.outlet   || 0);
+    const bocciCost    = sinks.boccis    * (pricingData.rates.bocci    || 0);
 
-    const servicesCost = pencilCost + fini45Cost + lamineCost
-                       + evierOverCost + evierUnderCost + evierVasqueCost
-                       + cooktopCost + farmSinkCost
-                       + outletCost + bocciCost;
+    const servicesCost = edgeCost + cutoutCost + farmSinkCost + outletCost + bocciCost;
 
     // Per-option (material + cutting); services are added to each option's subtotal.
     // Material cost uses the SAME slab-based calculation as the pricing tab (respects
@@ -11946,8 +12221,8 @@ function calcPageOptions(page) {
 
     return {
         page, roomSqft,
-        edgeFootage, pencilLf, fini45Lf, lamineLf, pencilCost, fini45Cost, lamineCost,
-        sinks, evierOverCost, evierUnderCost, evierVasqueCost, cooktopCost, farmSinkCost,
+        edgeFootage, edgeItems, cutoutItems, edgeCost, cutoutCost,
+        sinks, farmSinkCost, outletCost, bocciCost,
         servicesCost,
         options,                      // one entry per linked material (0+ entries)
         multi: options.length > 1     // convenience flag
@@ -11997,12 +12272,21 @@ function calcProjectFees() {
     const measCost    = measEnabled ? (pricingData.rates.measurements || 0) : 0;
     const polQty      = pricingData.polissageSousQty || 0;
     const polCost     = polQty * (pricingData.rates.polissageSous || 0);
+    // Shave material — sqft of pieces flagged "needs shave" × shave rate
+    const shaveSqft   = calcServiceQtys().shaveSqft || 0;
+    const shaveRate   = (typeof pricingData.rates.shave === 'number' && pricingData.rates.shave > 0) ? pricingData.rates.shave : FAB_SHAVE_RATE;
+    const shaveCost   = shaveSqft * shaveRate;
+    // Flat checkout toggles
+    const layoutCost     = pricingData.layoutFee ? FAB_LAYOUT_FEE : 0;
+    const handlingCost   = pricingData.customerHandling ? FAB_CUSTOMER_HANDLING_FEE : 0;
     return {
         totalSqft,
         installRate, installMin, installRaw, installCost, installMinApplied, installCustomUsed, installCustom,
         measEnabled, measCost,
         polQty, polCost,
-        total: installCost + measCost + polCost
+        shaveSqft, shaveRate, shaveCost,
+        layoutCost, handlingCost,
+        total: installCost + measCost + polCost + shaveCost + layoutCost + handlingCost
     };
 }
 
@@ -12394,12 +12678,14 @@ function generateProposal() {
     const projectFees    = calcProjectFees();
     const projectTotSqft = pages.reduce((s, p) => s + calcPageSqft(p), 0);
     function feeShareForPage(roomSqft) {
-        if (projectTotSqft <= 0 || roomSqft <= 0) return { install: 0, meas: 0, pol: 0, total: 0 };
+        if (projectTotSqft <= 0 || roomSqft <= 0) return { install: 0, meas: 0, pol: 0, extra: 0, total: 0 };
         const r = roomSqft / projectTotSqft;
         const install = projectFees.installCost * r;
         const meas    = projectFees.measCost    * r;
         const pol     = projectFees.polCost     * r;
-        return { install, meas, pol, total: install + meas + pol };
+        // Shave + Layout + Customer handling, spread by sqft share
+        const extra   = (projectFees.shaveCost + projectFees.layoutCost + projectFees.handlingCost) * r;
+        return { install, meas, pol, extra, total: install + meas + pol + extra };
     }
 
     for (let pi=0; pi<pages.length; pi++) {
